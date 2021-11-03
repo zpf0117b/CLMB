@@ -1,6 +1,8 @@
 # CLMB
 
-A simple framework for CLMB - n a novel deep Contrastive Learningfor Metagenomic Bin
+A simple framework for CLMB - a novel deep Contrastive Learningfor Metagenomic Binning
+
+Created by Pengfei Zhang, senior of Department of Computer Science, University of Science and Technology of China.
 
 We develop it under the framework of [VAMB](https://github.com/RasmussenLab/vamb/blob/master/doc/tutorial.ipynb), which is published on Nature Biotechnology (https://doi.org/10.1038/s41587-020-00777-4). All the commands are the same. We added file simclr_module.py and modified files __main__.py and encode.py to implement our algorithm.
 
@@ -40,7 +42,7 @@ For more command-line options, see the command-line help menu:
 vamb -h
 ```
 
-## TL;DR: Here's how to run Vamb
+## Here's how to run Vamb
 
 For this example, let us suppose you have a directory of short (e.g. Illumina) reads in a
 directory `/path/to/reads`, and that _you have already quality controlled them_.
