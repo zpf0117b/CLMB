@@ -1,37 +1,26 @@
-# Vamb
+# CLMB
+
+A simple framework for CLMB - n a novel deep Contrastive Learningfor Metagenomic Bin
+
+We develop it under the framework of [VAMB](https://github.com/RasmussenLab/vamb/blob/master/doc/tutorial.ipynb), which is published on Nature Biotechnology (https://doi.org/10.1038/s41587-020-00777-4). All the commands are the same. We added file simclr_module.py and modified files __main__.py and encode.py to implement our algorithm.
+
+The basic idea of the CLMB module is that, since the noise of real dataset is hard to calculate, we add simulated noise to the data and force the training to be robustto them.  By effectively tacking the noise in the metagenomics data using the contrastive deep learningframework (https://arxiv.org/pdf/2002.05709.pdf), we can group pairs of contigs that originate from the same type of bacterial together while dividing contigs from different species to different bins.
+
+
+### Vamb
 
 Created by Jakob Nybo Nissen and Simon Rasmussen, Technical University of Denmark and Novo Nordisk Foundation Center for Protein Research, University of Copenhagen.
 
 Vamb is a metagenomic binner which feeds sequence composition information from a contig catalogue and co-abundance information from BAM files into a variational autoencoder and clusters the latent representation. It performs excellently with multiple samples, and pretty good on single-sample data. Vamb is implemented purely in Python (with a little bit of Cython) and can be used both from command line and from within a Python interpreter.
 
-**Vamb is now out in Nature Biotechnology - read the manuscript [here](https://doi.org/10.1038/s41587-020-00777-4) and a [blog post](https://go.nature.com/2JzYUvI) by Jakob on the development of Vamb.**
-
-
-Vamb has changed a lot since the pre-print at [biorxiv](https://www.biorxiv.org/content/early/2018/12/19/490078) so we really recommend reading it at Nature Biotechnology. For instance, the current version of Vamb uses "multi-split binning" which is not mentioned in the pre-print.
-
 For more information about the implementation, methodological considerations, and advanced usage of Vamb, see the tutorial file (`doc/tutorial.html`)
 
-# Installation
-Vamb is most easily installed with pip - make sure your pip version is up to date, as it won't work with ancient versions (v. <= 9).
 
-### Installation for casual users:
-
-Recommended: Vamb can be installed with pip (thanks to contribution from C. Titus Brown):
-```
-pip install https://github.com/RasmussenLab/vamb/archive/3.0.2.zip
 ```
 
-or using [Bioconda's package](https://anaconda.org/bioconda/vamb) (thanks to contribution from Antônio Pedro Camargo).
-(note that the BioConda package does not include GPU support).
- 
-```
-conda install -c pytorch pytorch torchvision cudatoolkit=10.2
-conda install -c bioconda vamb
-```
+### Installation:
 
-### Installation for advanced users:
-
-If you want to install the latest version from GitHub you can clone and install it using:
+Install the latest version from GitHub you can clone and install it using:
 
 ```
 # clone the desired branch from the repository, here master
@@ -40,13 +29,6 @@ cd vamb
 pip install -e .
 ```
 
-### Installing by compiling the Cython yourself
-
-If you can't/don't want to use pip/Conda, you can do it the hard way: Get the most recent versions of the Python packages `cython`, `numpy`, `torch` and `pysam`. Compile `src/_vambtools.pyx`, (see `src/build_vambtools.py`) then move the resulting binary to the inner of the two `vamb` directories. Check if it works by importing `vamb` in a Python session.
-
-### Windows
-
-Vamb does currently not compile on Windows because it is dependent on `pysam`, but a Windows-friendly version is hopefully on the way (see branch `v4`). Let us know if you want to run Vamb on Windows.
 
 # Running
 
