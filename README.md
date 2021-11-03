@@ -16,14 +16,13 @@ Vamb is a metagenomic binner which feeds sequence composition information from a
 For more information about the implementation, methodological considerations, and advanced usage of Vamb, see the tutorial file (`doc/tutorial.html`)
 
 
-```
+
 
 ### Installation:
 
 Install the latest version from GitHub you can clone and install it using:
 
 ```
-# clone the desired branch from the repository, here master
 git clone https://github.com/RasmussenLab/vamb -b master
 cd vamb
 pip install -e .
