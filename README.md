@@ -23,7 +23,7 @@ For more information about the implementation, methodological considerations, an
 Install the latest version from GitHub you can clone and install it using:
 
 ```
-# clone the desired branch from the repository, here master
+// clone the desired branch from the repository, here master
 git clone https://github.com/RasmussenLab/vamb -b master
 cd vamb
 pip install -e .
