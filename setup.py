@@ -22,9 +22,10 @@ SETUP_METADATA = \
     "ext_modules": [Extension("vamb._vambtools",
                                sources=["src/_vambtools.pyx"],
                                language="c")],
-    "install_requires": ["numpy>=1.15", "torch==1.7.1", "pysam>=0.14", "torchvision>=0.6"],
+    # "install_requires": ["numpy>=1.15", "torch>=1.9.0", "pysam>=0.14", "torchvision>=0.10"],
+    "install_requires": ["numpy>=1.15", "pysam>=0.14"],
     "setup_requires": ['Cython>=0.25.2', "setuptools>=38.6.0"],
-    "python_requires": ">=3.5",
+    "python_requires": ">=3.7",
     "classifiers":[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
