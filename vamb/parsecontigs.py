@@ -15,7 +15,7 @@ _KERNEL = _vambtools.read_npz(_os.path.join(_os.path.dirname(_os.path.abspath(__
                               "kernel.npz"))
 
 def _project(fourmers, kernel=_KERNEL):
-    "Project fourmers down in dimensionality"
+    "Project fourmers(4-mer) down in dimensionality"
     s = fourmers.sum(axis=1).reshape(-1, 1)
     s[s == 0] = 1.0
     fourmers *= 1/s
@@ -58,7 +58,7 @@ def read_contigs(filehandle, minlength=100):
 
         raw.extend(entry.kmercounts(4))
 
-        if len(raw) > 256000:
+        if len(raw) > 256000: # extend for 1000 times
             _convert(raw, projected)
 
         lengths.append(len(entry))

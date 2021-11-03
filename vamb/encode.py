@@ -18,13 +18,16 @@ import numpy as _np
 import torch as _torch
 _torch.manual_seed(0)
 
-from math import log as _log
+
+import math
 
 from torch import nn as _nn
 from torch.optim import Adam as _Adam
 from torch.nn.functional import softmax as _softmax
 from torch.utils.data import DataLoader as _DataLoader
 from torch.utils.data.dataset import TensorDataset as _TensorDataset
+from torch.utils.data import SubsetRandomSampler, BatchSampler
+import torch.nn.functional as F
 import vamb.vambtools as _vambtools
 
 if _torch.__version__ < '0.4':
@@ -71,8 +74,8 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
         mask &= depthssum != 0
         depthssum = depthssum[mask]
 
-    if mask.sum() < batchsize:
-        raise ValueError('Fewer sequences left after filtering than the batch size.')
+#    if mask.sum() < batchsize:
+#        raise ValueError('Fewer sequences left after filtering than the batch size.')
 
     if destroy:
         rpkm = _vambtools.numpy_inplace_maskarray(rpkm, mask)
@@ -94,18 +97,20 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
     _vambtools.zscore(tnf, axis=0, inplace=True)
     depthstensor = _torch.from_numpy(rpkm)
     tnftensor = _torch.from_numpy(tnf)
+    # cattensor = _torch.cat((tnftensor,depthstensor),1)
+    # dataset = _TensorDataset(cattensor)
 
     # Create dataloader
-    n_workers = 4 if cuda else 1
+    n_workers = 0
     dataset = _TensorDataset(depthstensor, tnftensor)
-    dataloader = _DataLoader(dataset=dataset, batch_size=batchsize, drop_last=True,
-                             shuffle=True, num_workers=n_workers, pin_memory=cuda)
+    dataloader = _DataLoader(dataset=dataset, batch_size=batchsize, drop_last=False,
+                             shuffle=False, num_workers=n_workers, pin_memory=cuda)
 
     return dataloader, mask
 
+from . import simclr_module as SCM
 class VAE(_nn.Module):
     """Variational autoencoder, subclass of torch.nn.Module.
-
     Instantiate with:
         nsamples: Number of samples in abundance matrix
         nhiddens: List of n_neurons in the hidden layers [None=Auto]
@@ -114,19 +119,16 @@ class VAE(_nn.Module):
         beta: Multiply KLD by the inverse of this value [200]
         dropout: Probability of dropout on forward pass [0.2]
         cuda: Use CUDA (GPU accelerated training) [False]
-
     vae.trainmodel(dataloader, nepochs batchsteps, lrate, logfile, modelfile)
         Trains the model, returning None
-
     vae.encode(self, data_loader):
         Encodes the data in the data loader and returns the encoded matrix.
-
     If alpha or dropout is None and there is only one sample, they are set to
     0.99 and 0.0, respectively
     """
 
     def __init__(self, nsamples, nhiddens=None, nlatent=32, alpha=None,
-                 beta=200, dropout=0.2, cuda=False):
+                 beta=200, dropout=0.2, cuda=False, c=False):
         if nlatent < 1:
             raise ValueError('Minimum 1 latent neuron, not {}'.format(latent))
 
@@ -166,6 +168,7 @@ class VAE(_nn.Module):
         self.nhiddens = nhiddens
         self.nlatent = nlatent
         self.dropout = dropout
+        self.contrast = c
 
         # Initialize lists for holding hidden layers
         self.encoderlayers = _nn.ModuleList()
@@ -195,6 +198,10 @@ class VAE(_nn.Module):
         self.softplus = _nn.Softplus()
         self.dropoutlayer = _nn.Dropout(p=self.dropout)
 
+        if self.contrast:
+            self.weight_contrastive = 1.35 * 100
+            self.weight_ce_sse = 1
+            self.weight_kld = 0.001
         if cuda:
             self.cuda()
 
@@ -211,7 +218,7 @@ class VAE(_nn.Module):
 
         # Note: This softplus constrains logsigma to positive. As reconstruction loss pushes
         # logsigma as low as possible, and KLD pushes it towards 0, the optimizer will
-        # always push this to 0, meaning that the logsigma layer will be pushed towards
+        # always push this to 0,meaning that the logsigma layer will be pushed towards
         # negative infinity. This creates a nasty numerical instability in VAMB. Luckily,
         # the gradient also disappears as it decreases towards negative infinity, avoiding
         # NaN poisoning in most cases. We tried to remove the softplus layer, but this
@@ -268,7 +275,7 @@ class VAE(_nn.Module):
         if self.nsamples > 1:
             # Add 1e-9 to depths_out to avoid numerical instability.
             ce = - ((depths_out + 1e-9).log() * depths_in).sum(dim=1).mean()
-            ce_weight = (1 - self.alpha) / _log(self.nsamples)
+            ce_weight = (1 - self.alpha) / math.log(self.nsamples)
         else:
             ce = (depths_out - depths_in).pow(2).sum(dim=1).mean()
             ce_weight = 1 - self.alpha
@@ -281,64 +288,145 @@ class VAE(_nn.Module):
 
         return loss, ce, sse, kld
 
-    def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile):
+    def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile, hparams1):
         self.train()
+# VAMB
+        if not self.contrast:
+            epoch_loss = 0
+            epoch_kldloss = 0
+            epoch_sseloss = 0
+            epoch_celoss = 0
 
-        epoch_loss = 0
-        epoch_kldloss = 0
-        epoch_sseloss = 0
-        epoch_celoss = 0
+            if epoch in batchsteps:
+                data_loader = _DataLoader(dataset=data_loader.dataset,
+                                        batch_size=data_loader.batch_size * 2,
+                                        shuffle=True,
+                                        drop_last=False,
+                                        num_workers=data_loader.num_workers,
+                                        pin_memory=data_loader.pin_memory)
 
-        if epoch in batchsteps:
+            for depths_in, tnf_in in data_loader:
+                depths_in.requires_grad = True
+                tnf_in.requires_grad = True
+
+                if self.usecuda:
+                    depths_in = depths_in.cuda()
+                    tnf_in = tnf_in.cuda()
+
+                optimizer.zero_grad()
+
+                depths_out, tnf_out, mu, logsigma = self(depths_in, tnf_in)
+
+                loss, ce, sse, kld = self.calc_loss(depths_in, depths_out, tnf_in,
+                                                    tnf_out, mu, logsigma)
+
+                loss.backward()
+                optimizer.step()
+
+                epoch_loss += loss.data.item()
+                epoch_kldloss += kld.data.item()
+                epoch_sseloss += sse.data.item()
+                epoch_celoss += ce.data.item()
+
+            if logfile is not None:
+                print('\tEpoch: {}\tLoss: {:.6f}\tCE: {:.7f}\tSSE: {:.6f}\tKLD: {:.4f}\tBatchsize: {}'.format(
+                    epoch + 1,
+                    epoch_loss / len(data_loader),
+                    epoch_celoss / len(data_loader),
+                    epoch_sseloss / len(data_loader),
+                    epoch_kldloss / len(data_loader),
+                    data_loader.batch_size,
+                    ), file=logfile)
+
+                logfile.flush()
+    # simclr
+        else:
+            epoch_loss = 0
+            epoch_kldloss = 0
+            epoch_cesseloss = 0
+            epoch_clloss = 0
+
             data_loader = _DataLoader(dataset=data_loader.dataset,
-                                      batch_size=data_loader.batch_size * 2,
-                                      shuffle=True,
-                                      drop_last=True,
-                                      num_workers=data_loader.num_workers,
-                                      pin_memory=data_loader.pin_memory)
+                                batch_size=hparams1.batch_size, 
+                                shuffle=True, 
+                                num_workers=0, pin_memory=True,
+                                # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams1.train_size))),batch_size=hparams1.batch_size,drop_last=True),
+                                drop_last=False)
+            for depths_in1, tnf_in1, depths_in2, tnf_in2 in data_loader:
+                # print(_torch.sum(tnf_in1),tnf_in1.shape, file=logfile)
+                depths_in1, tnf_in1, depths_in2, tnf_in2 = depths_in1, tnf_in1, depths_in2, tnf_in2
+                # depths_in1, tnf_in1, depths_in2, tnf_in2 = depths_in1[0], tnf_in1[0], depths_in2[0], tnf_in2[0]
+                depths_in1.requires_grad = True
+                depths_in2.requires_grad = True
+                tnf_in1.requires_grad = True
+                tnf_in2.requires_grad = True
 
-        for depths_in, tnf_in in data_loader:
-            depths_in.requires_grad = True
-            tnf_in.requires_grad = True
+                if self.usecuda:
+                    depths_in1 = depths_in1.cuda()
+                    depths_in2 = depths_in2.cuda()
+                    tnf_in1 = tnf_in1.cuda()
+                    tnf_in2 = tnf_in2.cuda()
 
-            if self.usecuda:
-                depths_in = depths_in.cuda()
-                tnf_in = tnf_in.cuda()
+                optimizer.zero_grad()
 
-            optimizer.zero_grad()
+                depths_out1, tnf_out1, mu1, logsigma1 = self(depths_in1, tnf_in1)
+                depths_out2, tnf_out2, mu2, logsigma2 = self(depths_in2, tnf_in2)
 
-            depths_out, tnf_out, mu, logsigma = self(depths_in, tnf_in)
+                # loss1 = self.criterion(mu1, mu2)
+                # loss1 = self.nt_xent_loss(depths_proj1, depths_proj2, self.temperature)
+                # loss3 = self.nt_xent_loss(mu1, mu2)
+                # loss3 = self.nt_xent_loss(depths_out1, depths_out2) * (10/113) + self.nt_xent_loss(tnf_out1, tnf_out2) * (103 / 113)
+                loss3 = self.nt_xent_loss(_torch.cat((depths_out1, tnf_out1), 1), _torch.cat((depths_out2, tnf_out2), 1))
 
-            loss, ce, sse, kld = self.calc_loss(depths_in, depths_out, tnf_in,
-                                                  tnf_out, mu, logsigma)
+                loss1, ce1, sse1, kld1 = self.calc_loss(depths_in1, depths_out1, tnf_in1,
+                                                    tnf_out1, mu1, logsigma1)
+                loss2, ce2, sse2, kld2 = self.calc_loss(depths_in2, depths_out2, tnf_in2,
+                                                    tnf_out2, mu2, logsigma2)
 
-            loss.backward()
-            optimizer.step()
+                if self.nsamples > 1:
+                    ce_weight = (1 - self.alpha) / math.log(self.nsamples)
+                else:
+                    ce_weight = 1 - self.alpha
+                sse_weight = self.alpha / self.ntnf
+                kld_weight = 1 / (self.nlatent * 200)
 
-            epoch_loss += loss.data.item()
-            epoch_kldloss += kld.data.item()
-            epoch_sseloss += sse.data.item()
-            epoch_celoss += ce.data.item()
+                loss_contrastive = loss3 / (self.ntnf + self.nsamples)
+                loss_ce_sse = ((ce1 + ce2) * ce_weight + (sse1 + sse2) * sse_weight)
+                loss_kld = (kld1 + kld2) * kld_weight
 
-        if logfile is not None:
-            print('\tEpoch: {}\tLoss: {:.6f}\tCE: {:.7f}\tSSE: {:.6f}\tKLD: {:.4f}\tBatchsize: {}'.format(
-                  epoch + 1,
-                  epoch_loss / len(data_loader),
-                  epoch_celoss / len(data_loader),
-                  epoch_sseloss / len(data_loader),
-                  epoch_kldloss / len(data_loader),
-                  data_loader.batch_size,
-                  ), file=logfile)
+                loss = self.weight_contrastive * loss_contrastive + self.weight_ce_sse * loss_ce_sse + self.weight_kld * loss_kld
 
-            logfile.flush()
+                loss.backward()
+                optimizer.step()
+                print(self.weight_contrastive * loss_contrastive.data.item(), self.weight_ce_sse * loss_ce_sse.data.item(), self.weight_kld * loss_kld.data.item(), loss.data.item(), file=logfile)
 
-        return data_loader
+                epoch_loss += loss.data.item()
+                epoch_kldloss += loss_kld.data.item()
+                epoch_cesseloss += loss_ce_sse.data.item()
+                epoch_clloss += loss_contrastive.data.item()
+
+            if epoch == 0 or epoch == 10:
+                self.weight_contrastive = 1.35 * round(epoch_cesseloss / epoch_clloss, 6)
+                self.weight_ce_sse = 1
+                self.weight_kld = 0.001 * round(epoch_cesseloss / epoch_kldloss, 6)
+
+            if logfile is not None:
+                print('\tEpoch: {}\tLoss: {:.6f}\tCL: {:.7f}\tCE SSE: {:.6f}\tKLD: {:.4f}\tBatchsize: {}'.format(
+                    epoch + 1,
+                    epoch_loss / len(data_loader),
+                    epoch_clloss / len(data_loader),
+                    epoch_cesseloss / len(data_loader),
+                    epoch_kldloss / len(data_loader),
+                    data_loader.batch_size,
+                    ), file=logfile)
+
+                logfile.flush()
+
+        return None
 
     def encode(self, data_loader):
         """Encode a data loader to a latent representation with VAE
-
         Input: data_loader: As generated by train_vae
-
         Output: A (n_contigs x n_latent) Numpy array of latent repr.
         """
 
@@ -348,7 +436,7 @@ class VAE(_nn.Module):
                                       batch_size=data_loader.batch_size,
                                       shuffle=False,
                                       drop_last=False,
-                                      num_workers=1,
+                                      num_workers=0,
                                       pin_memory=data_loader.pin_memory)
 
         depths_array, tnf_array = data_loader.dataset.tensors
@@ -381,7 +469,6 @@ class VAE(_nn.Module):
 
     def save(self, filehandle):
         """Saves the VAE to a path or binary opened file. Load with VAE.load
-
         Input: Path or binary opened filehandle
         Output: None
         """
@@ -397,21 +484,19 @@ class VAE(_nn.Module):
         _torch.save(state, filehandle)
 
     @classmethod
-    def load(cls, path, cuda=False, evaluate=True):
+    def load(cls, path, cuda=False, evaluate=True, c=False):
         """Instantiates a VAE from a model file.
-
         Inputs:
             path: Path to model file as created by functions VAE.save or
                   VAE.trainmodel.
             cuda: If network should work on GPU [False]
             evaluate: Return network in evaluation mode [True]
-
         Output: VAE with weights and parameters matching the saved network.
         """
 
         # Forcably load to CPU even if model was saves as GPU model
-        dictionary = _torch.load(path, map_location=lambda storage, loc: storage)
-
+        # dictionary = _torch.load(path, map_location=lambda storage, loc: storage)
+        dictionary = _torch.load(path)
         nsamples = dictionary['nsamples']
         alpha = dictionary['alpha']
         beta = dictionary['beta']
@@ -420,7 +505,7 @@ class VAE(_nn.Module):
         nlatent = dictionary['nlatent']
         state = dictionary['state']
 
-        vae = cls(nsamples, nhiddens, nlatent, alpha, beta, dropout, cuda)
+        vae = cls(nsamples, nhiddens, nlatent, alpha, beta, dropout, cuda, c=c)
         vae.load_state_dict(state)
 
         if cuda:
@@ -432,9 +517,8 @@ class VAE(_nn.Module):
         return vae
 
     def trainmodel(self, dataloader, nepochs=500, lrate=1e-3,
-                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None):
+                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams1=None):
         """Train the autoencoder from depths array and tnf array.
-
         Inputs:
             dataloader: DataLoader made by make_dataloader
             nepochs: Train for this many epochs before encoding [500]
@@ -442,7 +526,6 @@ class VAE(_nn.Module):
             batchsteps: None or double batchsize at these epochs [25, 75, 150, 300]
             logfile: Print status updates to this file if not None [None]
             modelfile: Save models to this file if not None [None]
-
         Output: None
         """
 
@@ -463,8 +546,8 @@ class VAE(_nn.Module):
             if max(batchsteps, default=0) >= nepochs:
                 raise ValueError('Max batchsteps must not equal or exceed nepochs')
             last_batchsize = dataloader.batch_size * 2**len(batchsteps)
-            if len(dataloader.dataset) < last_batchsize:
-                raise ValueError('Last batch size exceeds dataset length')
+            #if len(dataloader.dataset) < last_batchsize:
+            #    raise ValueError('Last batch size exceeds dataset length')
             batchsteps_set = set(batchsteps)
 
         # Get number of features
@@ -489,8 +572,26 @@ class VAE(_nn.Module):
             print('\tN samples:', nsamples, file=logfile, end='\n\n')
 
         # Train
-        for epoch in range(nepochs):
-            dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile)
+        # simclr
+        if self.contrast:
+            dm = SCM.AugmentationDataModule(hparams1, _torch.cat(dataloader.dataset.tensors, 1), aug_mode=hparams1.aug_mode)
+            for epoch in range(nepochs):
+                dm.setup()
+                dl = dm.train_dataloader()
+                ds0, ds1 = dl.dataset.tensors[0], dl.dataset.tensors[1]
+                if epoch % 10 == 0:
+                    print('d', _torch.sum(_torch.pow(_torch.sub(ds0,ds1), 2)), file=logfile, end='\n')
+                dataloader = _DataLoader(dataset=_TensorDataset(ds0.narrow(1, 0, self.nsamples), ds0.narrow(1, self.nsamples, self.ntnf), ds1.narrow(1, 0, self.nsamples), ds1.narrow(1, self.nsamples, self.ntnf)),
+                                batch_size=hparams1.batch_size, 
+                                shuffle=True, 
+                                num_workers=0, pin_memory=False,
+                                # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams1.train_size))),batch_size=hparams1.batch_size,drop_last=True),
+                                drop_last=False)
+                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, hparams1)
+        # vamb
+        else:
+            for epoch in range(nepochs):
+                dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile)
 
         # Save weights - Lord forgive me, for I have sinned when catching all exceptions
         if modelfile is not None:
@@ -500,3 +601,48 @@ class VAE(_nn.Module):
                 pass
 
         return None
+
+    def nt_xent_loss(self, out_1, out_2, temperature=10, eps=1e-6):
+        """
+            assume out_1 and out_2 are normalized
+            out_1: [batch_size, dim]
+            out_2: [batch_size, dim]
+        """
+        # gather representations in case of distributed training
+        # out_1_dist: [batch_size * world_size, dim]
+        # out_2_dist: [batch_size * world_size, dim]
+        out_1 = F.normalize(out_1, dim=1)
+        out_2 = F.normalize(out_2, dim=1)
+
+        out_1_dist = out_1
+        out_2_dist = out_2
+
+        # out: [2 * batch_size, dim]
+        # out_dist: [2 * batch_size * world_size, dim]
+        out = _torch.cat([out_1, out_2], dim=0)
+        out_dist = _torch.cat([out_1_dist, out_2_dist], dim=0)
+
+        # sum by dim, we set dim=1 since our data are sequences
+        # [2 * batch_size, 2 * batch_size * world_size] or 1
+        # L2_norm = _torch.mm(_torch.sum(_torch.pow(out,2),dim=1,keepdim=True), _torch.sum(_torch.pow(out_dist.t().contiguous(),2),dim=0,keepdim=True))
+        # L2_norm = _torch.clamp(L2_norm, min=eps)
+        L2_norm = 1.
+
+        # cov and sim: [2 * batch_size, 2 * batch_size * world_size]
+        # neg: [2 * batch_size]
+        cov = _torch.div(_torch.mm(out, out_dist.t().contiguous()), L2_norm)
+        sim = _torch.exp(cov / temperature)
+        neg = sim.sum(dim=-1)
+
+        # from each row, subtract e^1 to remove similarity measure for x1.x1
+        row_sub = _torch.Tensor(neg.shape).fill_(math.e).to(neg.device)
+        neg = _torch.clamp(neg - row_sub, min=eps)  # clamp for numerical stability
+
+        # Positive similarity, pos becomes [2 * batch_size]
+        pos = _torch.exp(_torch.sum(out_1 * out_2, dim=-1) / temperature)
+        pos = _torch.cat([pos, pos], dim=0)
+
+        loss = -_torch.log(pos / (neg + eps)).mean()
+        # print(out,cov,sim,neg,row_sub,pos,loss)
+
+        return loss

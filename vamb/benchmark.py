@@ -55,7 +55,7 @@ Usage:
 >>> bins = Binning.from_file(open_clusters_file_handle, ref)
 >>> bins.print_matrix(rank=1)
 """
-
+import pickle as pk
 import collections as _collections
 from operator import add as _add
 from itertools import product as _product
@@ -452,6 +452,9 @@ class Binning:
         # One count per rank (+1 for inclusive "genome" rank)
         counts = [_collections.Counter() for i in range(len(self.reference.taxmaps) + 1)]
         recprecof = self._get_prec_rec_dict()
+        with open('a.pkl','wb') as f:
+                pk.dump(recprecof,f)
+                f.close()
         seen = self._getseen(recprecof)
         # Calculate counts for each taxonomic level
         for counter, taxmap in zip(counts, self.reference.taxmaps):
@@ -586,7 +589,7 @@ class Binning:
         fields = (self.ncontigs, self.reference.ncontigs, hex(id(self.reference)))
         return 'Binning({}/{} contigs, ReferenceID={})'.format(*fields)
 
-    def summary(self, precision=0.9, recalls=None):
+    def summary(self, precision=0.95, recalls=None):
         if recalls is None:
             recalls = self.recalls
         return [[counter[(recall, precision)] for recall in recalls] for counter in self.counters]

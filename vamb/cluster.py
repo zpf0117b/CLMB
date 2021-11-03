@@ -12,6 +12,7 @@ import numpy as _np
 import torch as _torch
 from collections import defaultdict as _defaultdict, deque as _deque
 from math import ceil as _ceil
+#from scipy.stats import norm as _norm
 import vamb.vambtools as _vambtools
 
 _DEFAULT_RADIUS = 0.06
@@ -24,15 +25,20 @@ _XMAX = 0.3
 # This is the PDF of normal with µ=0, s=0.01 from -0.075 to 0.075 with intervals
 # of DELTA_X, for a total of 31 values. We multiply by _DELTA_X so the density
 # of one point sums to approximately one
+#_MEAN = 0 
+#_VAR = 0.01
+#_X = _np.linspace(-0.075, 0.075, int(0.15 / _DELTA_X + 1))
+#_Y = _norm(_MEAN, _VAR)
+#_NORMALPDF = _DELTA_X * _torch.from_numpy(_Y.pdf(_X))
 _NORMALPDF = _DELTA_X * _torch.Tensor(
-      [2.43432053e-11, 9.13472041e-10, 2.66955661e-08, 6.07588285e-07,
-       1.07697600e-05, 1.48671951e-04, 1.59837411e-03, 1.33830226e-02,
-       8.72682695e-02, 4.43184841e-01, 1.75283005e+00, 5.39909665e+00,
-       1.29517596e+01, 2.41970725e+01, 3.52065327e+01, 3.98942280e+01,
-       3.52065327e+01, 2.41970725e+01, 1.29517596e+01, 5.39909665e+00,
-       1.75283005e+00, 4.43184841e-01, 8.72682695e-02, 1.33830226e-02,
-       1.59837411e-03, 1.48671951e-04, 1.07697600e-05, 6.07588285e-07,
-       2.66955661e-08, 9.13472041e-10, 2.43432053e-11])
+       [2.43432053e-11, 9.13472041e-10, 2.66955661e-08, 6.07588285e-07,
+        1.07697600e-05, 1.48671951e-04, 1.59837411e-03, 1.33830226e-02,
+        8.72682695e-02, 4.43184841e-01, 1.75283005e+00, 5.39909665e+00,
+        1.29517596e+01, 2.41970725e+01, 3.52065327e+01, 3.98942280e+01,
+        3.52065327e+01, 2.41970725e+01, 1.29517596e+01, 5.39909665e+00,
+        1.75283005e+00, 4.43184841e-01, 8.72682695e-02, 1.33830226e-02,
+        1.59837411e-03, 1.48671951e-04, 1.07697600e-05, 6.07588285e-07,
+        2.66955661e-08, 9.13472041e-10, 2.43432053e-11])
 
 class Cluster:
     __slots__ = ['medoid', 'seed', 'members', 'pvr', 'radius', 'isdefault', 'successes', 'attempts']

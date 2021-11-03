@@ -268,7 +268,7 @@ def byte_iterfasta(filehandle, comment=b'#'):
             else:
                 raise ValueError('First non-comment line is not a Fasta header')
 
-        else: # no break
+        else: # no break Caution!! Represent for that for block has no breaks, don't use it causally
             raise ValueError('Empty or outcommented file')
 
     except TypeError:
@@ -278,7 +278,7 @@ def byte_iterfasta(filehandle, comment=b'#'):
     header = probeline[1:-1].decode()
     buffer = list()
 
-    # Iterate over lines
+    # Iterate over lines and yield generators one by one
     for line in line_iterator:
         if line.startswith(comment):
             pass
@@ -512,6 +512,7 @@ def write_npz(file, array):
     Output: None
     """
     _np.savez_compressed(file, array)
+    #_np.savez(file, array)
 
 def filtercontigs(infile, outfile, minlength=2000):
     """Creates new FASTA file with filtered contigs

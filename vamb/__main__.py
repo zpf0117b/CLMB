@@ -17,7 +17,6 @@ DEFAULT_PROCESSES = min(os.cpu_count(), 8)
 os.environ["MKL_NUM_THREADS"] = str(DEFAULT_PROCESSES)
 os.environ["NUMEXPR_NUM_THREADS"] = str(DEFAULT_PROCESSES)
 os.environ["OMP_NUM_THREADS"] = str(DEFAULT_PROCESSES)
-
 # Append vamb to sys.path to allow vamb import even if vamb was not installed
 # using pip
 parentdir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -101,7 +100,7 @@ def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, nco
             rpkms = vamb.vambtools._load_jgi(file, mincontiglength, refhash)
 
     else:
-        log('Parsing {} BAM files with {} subprocesses'.format(len(bampaths), subprocesses),
+        log('Parsing {} BAM files with {} subprocesses'.format(len(bampaths) if bampaths is not None else 0, subprocesses),
            logfile, 1)
         log('Min alignment score: {}'.format(minalignscore), logfile, 1)
         log('Min identity: {}'.format(minid), logfile, 1)
@@ -127,17 +126,14 @@ def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, nco
 
     return rpkms
 
+from argparse import Namespace
+from . import simclr_module as SCM
 def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
             batchsize, nepochs, lrate, batchsteps, logfile):
 
     begintime = time.time()
     log('\nCreating and training VAE', logfile)
-
     nsamples = rpkms.shape[1]
-    vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=nlatent,
-                            alpha=alpha, beta=beta, dropout=dropout, cuda=cuda)
-
-    log('Created VAE', logfile, 1)
     dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
                                                    destroy=True, cuda=cuda)
     log('Created dataloader and mask', logfile, 1)
@@ -147,19 +143,154 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
     log('Number of sequences remaining: {}'.format(len(mask) - n_discarded), logfile, 1)
     print('', file=logfile)
 
-    modelpath = os.path.join(outdir, 'model.pt')
-    vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,
-                  logfile=logfile, modelfile=modelpath)
+    # basic config
+    aug_all_method = ['GaussianNoise','NumericalChange','WordDrop','FragmentTransfer','Reverse','CropAndResize']
+    hparams1 = Namespace(
+        lr=1e-1,
+        epochs=nepochs,
+        patience=50,
+        num_nodes=1,
+        gpus=0 if cuda else 1,
+        batch_size=8192,
+        train_size=len(mask) - n_discarded,
+        validation_size=4096,
+        visualize_size=25600,
+        hidden_mlp=32,
+        input_size=113,
+        l2_norm=True, # if False, temperature = 1e+x; if True, temperature < 1
+        temperature=0.1,
+        feat_dim=32,
+        device=cuda,
+        aug_mode=(0,0)
+    )
 
-    print('', file=logfile)
-    log('Encoding to latent representation', logfile, 1)
+# simclr
+    # dataset = dataloader.dataset.tensors
+    # dataset = torch.cat(dataset, 1)
+    # model = SCM.SimCLR(num_samples=hparams1.train_size,max_epochs=hparams1.epochs,batch_size=hparams1.batch_size,temperature=hparams1.temperature,
+    #             input_size=hparams1.input_size,hidden_mlp=hparams1.hidden_mlp,start_lr=hparams1.lr,feat_dim=hparams1.feat_dim).to(device)
+    # dm = SCM.AugmentationDataModule(hparams1,dataset,aug_mode=hparams1.aug_mode)
+    # # logger = WandbLogger(project="simclr-blogpost")
+    # # logger.watch(model, log="all", log_freq=500)
+    # model_checkpoint = ModelCheckpoint(save_last=True, save_top_k=1, monitor='val_loss',mode='min')
+    # early_stop = EarlyStopping(monitor='val_loss',min_delta=1e-3,patience=hparams1.patience,mode='min')
+    # callbacks = [model_checkpoint,early_stop]
+    # trainer = pl.Trainer(
+    #     max_epochs=hparams1.epochs,
+    #     gpus=hparams1.gpus,
+    #     num_nodes=hparams1.num_nodes,
+    #     distributed_backend='ddp' if hparams1.gpus > 1 else None,
+    #     sync_batchnorm=True if hparams1.gpus > 1 else False,
+    #     precision=32,
+    #     callbacks=callbacks,
+    #     # logger=logger,
+    #     auto_lr_find=True
+    # )
+    # lr_finder = trainer.tuner.lr_find(model, datamodule=dm)
+    # hparams1.lr = lr_finder.suggestion()
+
+    # model = SCM.SimCLR(num_samples=hparams1.train_size,max_epochs=hparams1.epochs,batch_size=hparams1.batch_size,temperature=hparams1.temperature,
+    #             input_size=hparams1.input_size,hidden_mlp=hparams1.hidden_mlp,start_lr=hparams1.lr,feat_dim=hparams1.feat_dim).to(device)
+    # trainer = pl.Trainer(
+    #     max_epochs=hparams1.epochs,
+    #     max_steps=len(model.lr_schedule),
+    #     gpus=hparams1.gpus,
+    #     num_nodes=hparams1.num_nodes,
+    #     distributed_backend='ddp' if hparams1.gpus > 1 else None,
+    #     sync_batchnorm=True if hparams1.gpus > 1 else False,
+    #     precision=32,
+    #     callbacks=callbacks,
+    #     # logger=logger,
+    #     auto_lr_find=True
+    # )
+    # trainer.fit(model, datamodule=dm)
+    # model_file = os.path.join(outdir.replace('results','data'), f"models2/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)+' '+str(hparams1.feat_dim)}.pt")
+    # ckt_file = '/headless/thesis/lightning_logs/version_80/checkpoints/epoch=379-step=8739.ckpt'
+    # # model_file = os.path.join(outdir.replace('results','data'), f"models/{(hparams1.aug_mode[0])+' '+(hparams1.aug_mode[1])+' '+str(hparams1.hidden_mlp)+' '+str(hparams1.feat_dim)}.pt")
+    # torch.save(model.encoder[0].state_dict(),model_file)
+    # sys.exit(0)
+
+    # simclr_model = SCM.SimCLR(num_samples=hparams1.train_size,max_epochs=hparams1.epochs,batch_size=hparams1.batch_size,temperature=hparams1.temperature,
+                # input_size=hparams1.input_size,hidden_mlp=hparams1.hidden_mlp,start_lr=hparams1.lr,feat_dim=hparams1.feat_dim).to(device)
+    
+    # simclr_model=SCM.EncodeModel(input_size=hparams1.input_size,output_size=hparams1.hidden_mlp)
+    # simclr_model.load_state_dict(torch.load(ckt_file)['state_dict'])
+
+    # simclr_model.to(device)
+    # simclr_model.load_state_dict(torch.load(model_file))
+    # simclr_model = simclr_model.encoder_in1[0]
+
+
+    # # get data
+    # from torch.utils.data import DataLoader as _DataLoader
+    # from torch.utils.data import Dataset, SubsetRandomSampler, SequentialSampler, RandomSampler
+    # from torch.utils.data.dataset import TensorDataset as _TensorDataset
+    # dataloader = _DataLoader(dataset=_TensorDataset(dataset), batch_size=hparams1.batch_size, drop_last=False,
+    #                          shuffle=False, num_workers=4, pin_memory=cuda)
+    # i = 0
+    # with torch.no_grad():
+    #     for idx, batch in enumerate(dataloader):
+    #         c = batch[0].to(device)
+    #         mu = simclr_model(c)
+    #         if i == 0:
+    #             i = i + 1
+    #             prelatent = mu.clone().detach()
+    #         else:
+    #             prelatent = torch.cat((prelatent,mu),0)
+    # del dataset
+    # print(prelatent.shape)
+
+# simclr-vae
+    if True:
+    	vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=hparams1.hidden_mlp,
+                            alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
+    	modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
+
+    	vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,
+                logfile=logfile, modelfile=modelpath, hparams1=hparams1)
+    # del vae
+    # sys.exit(0)
+
+    # print('', file=logfile)
+    # log('Encoding to latent representation', logfile, 1)
+    else:
+    	modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
+    	vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
+    	vae.to(('cuda' if cuda else 'cpu'))
+
     latent = vae.encode(dataloader)
     vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
     del vae # Needed to free "latent" array's memory references?
 
+# vamb-vae
+    # vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=nlatent,
+    #                         alpha=alpha, beta=beta, dropout=dropout, cuda=cuda)
+
+    # # modelpath = os.path.join(outdir, 'model.pt')
+    # modelpath = os.path.join(outdir.replace('results','data'), "models/vae.pt")
+    # vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,
+    #               logfile=logfile, modelfile=modelpath)
+    # # sys.exit(0)
+
+    # print('', file=logfile)
+    # log('Encoding to latent representation', logfile, 1)
+    # vae_model = vamb.encode.VAE.load(modelpath,cuda=True)
+    # vae_model.to(device)
+    # latent = vae_model.encode(dataloader)
+    
+    # vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
+    # del vae_model # Needed to free "latent" array's memory references?
+# end
+
+    # vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
+
+    # visualize
+    # from . import visualize
+    # visual_model = {'simclr':vae} # 'vae':vae_model
+    # visualize.visualize(hparams1,dataloader,visual_model,method='umap',**{'select':18})
+
     elapsed = round(time.time() - begintime, 2)
     log('Trained VAE and encoded in {} seconds'.format(elapsed), logfile, 1)
-
     return mask, latent
 
 def cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclusters,
@@ -174,9 +305,145 @@ def cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclus
     log('Use CUDA for clustering: {}'.format(cuda), logfile, 1)
     log('Separator: {}'.format(None if separator is None else ('"'+separator+'"')),
         logfile, 1)
+# our clustering algorithm
+    from sklearn.cluster import DBSCAN, MiniBatchKMeans
+    from sklearn.metrics.pairwise import pairwise_distances
+    from scipy.sparse import csr_matrix
+    import math
+    it = []
+    def get_all_index(lst: list=[], item=None):
+        return [index for (index,value) in enumerate(lst) if value == item]
+    '''
+    # source: https://gist.github.com/gdbassett/528d816d035f2deaaca1
+    # X should be a numpy matrix, very likely sparse matrix: http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.sparse.csr_matrix.html#scipy.sparse.csr_matrix
+    # T1 > T2 for overlapping clusters
+    # T1 = Distance to centroid point to not include in other clusters
+    # T2 = Distance to centroid point to include in cluster
+    # T1 > T2 for overlapping clusters
+    # T1 < T2 will have points which reside in no clusters
+    # T1 == T2 will cause all points to reside in mutually exclusive clusters
+    # Distance metric can be any from here: http://scikit-learn.org/stable/modules/generated/sklearn.metrics.pairwise.pairwise_distances.html
+    # filemap may be a list of point names in their order in X. If included, row numbers from X will be replaced with names from filemap. 
+    '''
+    def canopy(X, T1, T2, distance_metric='euclidean', filemap=None):
+        X = csr_matrix(X)
+        canopies = dict()
+        X1_dist = pairwise_distances(X, metric=distance_metric)
+        canopy_points = set(range(X.shape[0]))
+        while canopy_points:
+            point = canopy_points.pop()
+            i = len(canopies)
+            canopies[i] = {"c":point, "points": list(np.where(X1_dist[point] < T2)[0])}
+            canopy_points = canopy_points.difference(set(np.where(X1_dist[point] < T1)[0]))
+        if filemap:
+            for canopy_id in canopies.keys():
+                canopy = canopies.pop(canopy_id)
+                canopy2 = {"c":filemap[canopy['c']], "points":list()}
+                for point in canopy['points']:
+                    canopy2["points"].append(filemap[point])
+                canopies[canopy_id] = canopy2
+        return canopies
 
+# dbscan
+    # gregarious,outlier = range(len(latent)),[]
+    # dbscan_clustering = DBSCAN(eps=0.35, min_samples=2)
+    # dbscan_labels = dbscan_clustering.fit_predict(latent)
+    # all_value_dbscan = set(dbscan_labels)
+    # outlier = get_all_index(dbscan_labels, -1)
+    # print(len(all_value_dbscan),len(outlier))
+
+    # for v in all_value_dbscan:
+    #     if v != -1:
+    #         v_cluster = get_all_index(dbscan_labels, v)
+    #         medoid = contignames[v_cluster[0]]
+    #         points = {contignames[i] for i in v_cluster}
+    #         it.append((medoid, points))
+
+    # for o in outlier:
+    #     medoid = contignames[o]
+    #     points = {contignames[i] for i in [o]}
+    #     it.append((medoid, points))
+
+# dbscan + kmeans 1
+    # # exclude the outlier using DBSCAN
+    # gregarious,outlier = range(len(latent)),[]
+    # dbscan_clustering = DBSCAN(eps=0.16 * math.log2(int(latent.shape[1])), min_samples=2)
+    # dbscan_labels = dbscan_clustering.fit_predict(latent)
+    # all_value_dbscan = set(dbscan_labels)
+    # outlier = get_all_index(dbscan_labels, -1)
+    # print(len(all_value_dbscan),len(outlier))
+
+    # gregarious = sorted(list(set(range(len(latent))).difference(set(outlier))))
+    # gregarious_latent = latent[np.array(gregarious)]
+    # print(len(gregarious))
+
+    # # cluster the gregarious data using kmeans
+    # n_clusters=len(all_value_dbscan)-1
+    # kmeans_clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, batch_size=4096, max_iter=25, init_size=20000 if n_clusters < 20000 else n_clusters, reassignment_ratio=0.2)
+    # kmeans_labels = kmeans_clustering.fit_predict(gregarious_latent)
+    # all_value_kmeans = set(kmeans_labels)
+
+    # for v in all_value_kmeans:
+    #     v_cluster = get_all_index(kmeans_labels, v)
+    #     medoid = contignames[gregarious[v_cluster[0]]]
+    #     points = {contignames[gregarious[i]] for i in v_cluster}
+    #     it.append((medoid, points))
+
+    # for o in outlier:
+    #     medoid = contignames[o]
+    #     points = {contignames[i] for i in [o]}
+    #     it.append((medoid, points))
+
+# dbscan + kmeans 2
+    # # exclude the outlier using DBSCAN
+    # gregarious,outlier = range(len(latent)),[]
+    # dbscan_clustering = DBSCAN(eps=15, min_samples=2)
+    # dbscan_labels = dbscan_clustering.fit_predict(latent)
+    # all_value_dbscan = set(dbscan_labels)
+    # outlier = get_all_index(dbscan_labels, -1)
+    # print(len(all_value_dbscan),len(outlier))
+
+    # gregarious = range(len(latent))
+    # gregarious_latent = latent[np.array(gregarious)]
+
+    # # cluster using kmeans
+    # n_clusters=len(all_value_dbscan) - 1 + len(outlier)
+    # kmeans_clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, batch_size=4096, max_iter=25, init_size=20000 if n_clusters < 20000 else n_clusters, reassignment_ratio=0.2)
+    # kmeans_labels = kmeans_clustering.fit_predict(gregarious_latent)
+    # all_value_kmeans = set(kmeans_labels)
+
+    # for v in all_value_kmeans:
+    #     v_cluster = get_all_index(kmeans_labels, v)
+    #     medoid = contignames[gregarious[v_cluster[0]]]
+    #     points = {contignames[gregarious[i]] for i in v_cluster}
+    #     it.append((medoid, points))
+
+# canopy + kmeans
+    # gregarious,outlier = range(len(latent)),[]
+
+    # gregarious = sorted(list(set(range(len(latent))).difference(set(outlier))))
+    # gregarious_latent = latent[np.array(gregarious)]
+    # # print(len(gregarious))
+
+    # # use canopy algorithm to estimate k for k-means
+    # canopy_clustering = canopy(gregarious_latent, 2, 3)
+    # print(len(canopy_clustering))
+
+    # # cluster the gregarious data using kmeans
+    # n_clusters=len(canopy_clustering)
+    # kmeans_clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, batch_size=4096, max_iter=25, init_size=20000 if n_clusters < 20000 else n_clusters, reassignment_ratio=0.2)
+    # kmeans_labels = kmeans_clustering.fit_predict(gregarious_latent)
+    # all_value_kmeans = set(kmeans_labels)
+
+    # for v in all_value_kmeans:
+    #     v_cluster = get_all_index(kmeans_labels, v)
+    #     medoid = contignames[gregarious[v_cluster[0]]]
+    #     points = {contignames[gregarious[i]] for i in v_cluster}
+    #     it.append((medoid, points))
+
+# medoid
     it = vamb.cluster.cluster(latent, contignames, destroy=True, windowsize=windowsize,
-                              normalized=False, minsuccesses=minsuccesses, cuda=cuda)
+                                normalized=False, minsuccesses=minsuccesses, cuda=cuda)
 
     renamed = ((str(i+1), c) for (i, (n,c)) in enumerate(it))
 
@@ -240,26 +507,46 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, bampaths, rpkmpath, 
     begintime = time.time()
 
     # Get TNFs, save as npz
-    tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, tnfpath, namespath,
+    if True:
+        tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, tnfpath, namespath,
                                                 lengthspath, mincontiglength, logfile)
-
+        vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'contiglengths.npz'), contiglengths)
+        vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'tnfs.npz'), tnfs)
+        with open(os.path.join(outdir.replace('results','data'), 'contignames.txt'),'w') as f:
+            f.write('\n'.join(contignames))
+            f.close()
+    else:
+        contiglengths = vamb.vambtools.read_npz(os.path.join(outdir.replace('results','data'), 'contiglengths.npz'))
+        tnfs = vamb.vambtools.read_npz(os.path.join(outdir.replace('results','data'), 'tnfs.npz'))
+        with open(os.path.join(outdir.replace('results','data'), 'contignames.txt'),'r') as f:
+            raw_contignames = f.readlines()
+            contignames = [rawstr.replace('\n','') for rawstr in raw_contignames]
+            f.close()
+    print(1)
     # Parse BAMs, save as npz
     refhash = None if norefcheck else vamb.vambtools._hash_refnames(contignames)
-    rpkms = calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash,
+    if rpkmpath is None:
+        rpkms = calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash,
                       len(tnfs), minalignscore, minid, subprocesses, logfile)
-
+    else:
+        if rpkmpath == r'padding$padding':
+            rpkms = np.ones((len(contignames),1),dtype=np.float32)
+        else:
+            rpkms_data = np.load(rpkmpath)
+            rpkms = rpkms_data[rpkms_data.files[0]]
+    print(2)
     # Train, save model
     mask, latent = trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta,
                            dropout, cuda, batchsize, nepochs, lrate, batchsteps, logfile)
 
     del tnfs, rpkms
     contignames = [c for c, m in zip(contignames, mask) if m]
-
+    print(3)
     # Cluster, save tsv file
     clusterspath = os.path.join(outdir, 'clusters.tsv')
     cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclusters,
             minclustersize, separator, cuda, logfile)
-
+    print(4)
     del latent
 
     if minfasta is not None:
@@ -340,7 +627,7 @@ def main():
     trainos = parser.add_argument_group(title='Training options', description=None)
 
     trainos.add_argument('-e', dest='nepochs', metavar='', type=int,
-                        default=500, help='epochs [500]')
+                        default=600, help='epochs [600]')
     trainos.add_argument('-t', dest='batchsize', metavar='', type=int,
                         default=256, help='starting batch size [256]')
     trainos.add_argument('-q', dest='batchsteps', metavar='', type=int, nargs='*',
@@ -372,7 +659,8 @@ def main():
     # Outdir does not exist
     args.outdir = os.path.abspath(args.outdir)
     if os.path.exists(args.outdir):
-        raise FileExistsError(args.outdir)
+        os.system(f'rm -r {args.outdir}')
+        # raise FileExistsError(args.outdir)
 
     # Outdir is in an existing parent dir
     parentdir = os.path.dirname(args.outdir)
@@ -394,8 +682,11 @@ def main():
             raise FileNotFoundError('Not an existing non-directory file: ' + args.fasta)
 
     # Make sure only one RPKM input is there
-    if sum(i is not None for i in (args.bamfiles, args.rpkm, args.jgi)) != 1:
+    rpkm_flag = True
+    if sum(i is not None for i in (args.bamfiles, args.rpkm, args.jgi)) > 1:
         raise argparse.ArgumentTypeError('Must specify exactly one of BAM files, JGI file or RPKM input')
+    elif sum(i is not None for i in (args.bamfiles, args.rpkm, args.jgi)) == 0:
+        rpkm_flag = False
 
     for path in args.rpkm, args.jgi:
         if path is not None and not os.path.isfile(path):
@@ -504,7 +795,7 @@ def main():
             args.names,
             args.lengths,
             args.bamfiles,
-            args.rpkm,
+            args.rpkm if rpkm_flag else r'padding$padding',
             args.jgi,
             mincontiglength=args.minlength,
             norefcheck=args.norefcheck,

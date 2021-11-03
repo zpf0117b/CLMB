@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -ex
+
+# This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
+
+# install vamb and dependencies
+pip install -e vamb
+cd ..
+
+# using GPU for acceleration
+# important: it can run with only CPUs, then it is ~1 hour per dataset
+# to run without GPU remove "--cuda"
+
+# Note that output may vary between runs due to the stochastic process of training the neural networks
+
+# run on CAMI2 datasets
+# using multi-split (as here we had individual assemblies available)
+vamb --outdir results/airways --fasta data/airways/contigs.fna.gz --rpkm data/airways/abundance.npz -o C --cuda
+vamb --outdir results/gi --fasta data/gi/contigs.fna.gz --rpkm data/gi/abundance.npz -o C --cuda
+vamb --outdir results/oral --fasta data/oral/contigs.fna.gz --rpkm data/oral/abundance.npz -o C --cuda
+vamb --outdir results/skin --fasta data/skin/contigs.fna.gz --rpkm data/skin/abundance.npz -o C --cuda
+vamb --outdir results/urog --fasta data/urog/contigs.fna.gz --rpkm data/urog/abundance.npz -o C --cuda
+
+# run on MetaHIT dataset
+# without multi-split (as here we had pooled assemblies)
+vamb --outdir results/metahit --fasta data/metahit/contigs.fna.gz --rpkm data/metahit/abundance.npz -o ref --cuda
+
+# benchmark
+python3 code/vamb/src/cmd_benchmark.py --tax data/airways/taxonomy.tsv code/vamb results/airways/clusters.tsv data/airways/reference.tsv > results/airways/benchmark.tsv
+
+python3 code/vamb/src/cmd_benchmark.py --tax data/gi/taxonomy.tsv code/vamb results/gi/clusters.tsv data/gi/reference.tsv > results/gi/benchmark.tsv
+
+python3 code/vamb/src/cmd_benchmark.py --tax data/oral/taxonomy.tsv code/vamb results/oral/clusters.tsv data/oral/reference.tsv > results/oral/benchmark.tsv
+
+python3 code/vamb/src/cmd_benchmark.py --tax data/skin/taxonomy.tsv code/vamb results/skin/clusters.tsv data/skin/reference.tsv > results/skin/benchmark.tsv
+
+python3 code/vamb/src/cmd_benchmark.py --tax data/urog/taxonomy.tsv code/vamb results/urog/clusters.tsv data/urog/reference.tsv > results/urog/benchmark.tsv
+
+python3 code/vamb/src/cmd_benchmark.py --tax data/metahit/taxonomy.tsv code/vamb results/metahit/clusters.tsv data/metahit/reference.tsv > results/metahit/benchmark.tsv
+
+# print benchmarks to screen
+head -n 10000 results/*/benchmark.tsv
+
+
+
+

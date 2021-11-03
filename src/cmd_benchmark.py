@@ -47,3 +47,30 @@ binning = vamb.benchmark.Binning(clusters, reference, minsize=args.min_bin_size,
 for rank in range(len(binning.counters)):
     binning.print_matrix(rank)
     print("")
+
+print('Vamb bins:')
+for rank in binning.summary():
+    print('\t'.join(map(str, rank)))
+
+
+# import matplotlib.pyplot as plt
+
+# for precision in 0.95, 0.9:
+#     plt.figure(figsize=(10, 2))
+#     colors = ['#DDDDDD', '#AAAAAA', '#777777', '#444444', '#000000']
+#     recalls = [0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99]
+#     for y, bins in zip((0, 1), (binning, binning)):
+#         for color, recall in zip(colors, recalls):
+#             plt.barh(y, bins.counters[1][(recall, precision)], color=color)
+
+#     plt.title(str(precision), fontsize=18)
+#     plt.yticks([0, 1], ['Vamb', 'MetaBAT2'], fontsize=16)
+#     plt.xticks([i*25 for i in range(5)], fontsize=13)
+#     plt.legend([str(i) for i in recalls], bbox_to_anchor=(1, 1.1), title='Recall', fontsize=12)
+    
+#     if precision == 0.9:
+#         plt.xlabel('# of Genomes Identified', fontsize=16)
+#     plt.gca().set_axisbelow(True)
+#     plt.grid()
+
+# plt.show()
