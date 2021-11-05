@@ -4,7 +4,7 @@ A simple framework for CLMB - a novel deep Contrastive Learningfor Metagenomic B
 
 Created by Pengfei Zhang, senior of Department of Computer Science, University of Science and Technology of China.
 
-We develop it under the framework of [VAMB](https://github.com/RasmussenLab/vamb/blob/master/doc/tutorial.ipynb), which is published on Nature Biotechnology (https://doi.org/10.1038/s41587-020-00777-4). All the commands are the same. We added files simclr_module.py augmentation.py and modified files __main__.py encode.py to implement our algorithm.
+We develop it under the framework of [VAMB](https://github.com/RasmussenLab/vamb/blob/master/doc/tutorial.ipynb), which is published on Nature Biotechnology (https://doi.org/10.1038/s41587-020-00777-4). All the commands are the same. We added files simclr_module.py augmentation.py and modified files \_\_main\_\_.py encode.py to implement our algorithm.
 
 The basic idea of the CLMB module is that, since the noise of real dataset is hard to calculate, we add simulated noise to the data and force the training to be robustto them.  By effectively tacking the noise in the metagenomics data using the contrastive deep learningframework (https://arxiv.org/pdf/2002.05709.pdf), we can group pairs of contigs that originate from the same type of bacterial together while dividing contigs from different species to different bins.
 
