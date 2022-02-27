@@ -9,6 +9,7 @@ import torch
 import datetime
 import time
 import shutil
+import random
 
 DEFAULT_PROCESSES = min(os.cpu_count(), 8)
 
@@ -17,6 +18,7 @@ DEFAULT_PROCESSES = min(os.cpu_count(), 8)
 os.environ["MKL_NUM_THREADS"] = str(DEFAULT_PROCESSES)
 os.environ["NUMEXPR_NUM_THREADS"] = str(DEFAULT_PROCESSES)
 os.environ["OMP_NUM_THREADS"] = str(DEFAULT_PROCESSES)
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 # Append vamb to sys.path to allow vamb import even if vamb was not installed
 # using pip
 parentdir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -151,7 +153,7 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
         patience=50,
         num_nodes=1,
         gpus=0 if cuda else 1,
-        batch_size=8192,
+        batch_size=16384,
         train_size=len(mask) - n_discarded,
         validation_size=4096,
         visualize_size=25600,
@@ -164,95 +166,22 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
         aug_mode=(0,0)
     )
 
-# simclr
-    # dataset = dataloader.dataset.tensors
-    # dataset = torch.cat(dataset, 1)
-    # model = SCM.SimCLR(num_samples=hparams1.train_size,max_epochs=hparams1.epochs,batch_size=hparams1.batch_size,temperature=hparams1.temperature,
-    #             input_size=hparams1.input_size,hidden_mlp=hparams1.hidden_mlp,start_lr=hparams1.lr,feat_dim=hparams1.feat_dim).to(device)
-    # dm = SCM.AugmentationDataModule(hparams1,dataset,aug_mode=hparams1.aug_mode)
-    # # logger = WandbLogger(project="simclr-blogpost")
-    # # logger.watch(model, log="all", log_freq=500)
-    # model_checkpoint = ModelCheckpoint(save_last=True, save_top_k=1, monitor='val_loss',mode='min')
-    # early_stop = EarlyStopping(monitor='val_loss',min_delta=1e-3,patience=hparams1.patience,mode='min')
-    # callbacks = [model_checkpoint,early_stop]
-    # trainer = pl.Trainer(
-    #     max_epochs=hparams1.epochs,
-    #     gpus=hparams1.gpus,
-    #     num_nodes=hparams1.num_nodes,
-    #     distributed_backend='ddp' if hparams1.gpus > 1 else None,
-    #     sync_batchnorm=True if hparams1.gpus > 1 else False,
-    #     precision=32,
-    #     callbacks=callbacks,
-    #     # logger=logger,
-    #     auto_lr_find=True
-    # )
-    # lr_finder = trainer.tuner.lr_find(model, datamodule=dm)
-    # hparams1.lr = lr_finder.suggestion()
-
-    # model = SCM.SimCLR(num_samples=hparams1.train_size,max_epochs=hparams1.epochs,batch_size=hparams1.batch_size,temperature=hparams1.temperature,
-    #             input_size=hparams1.input_size,hidden_mlp=hparams1.hidden_mlp,start_lr=hparams1.lr,feat_dim=hparams1.feat_dim).to(device)
-    # trainer = pl.Trainer(
-    #     max_epochs=hparams1.epochs,
-    #     max_steps=len(model.lr_schedule),
-    #     gpus=hparams1.gpus,
-    #     num_nodes=hparams1.num_nodes,
-    #     distributed_backend='ddp' if hparams1.gpus > 1 else None,
-    #     sync_batchnorm=True if hparams1.gpus > 1 else False,
-    #     precision=32,
-    #     callbacks=callbacks,
-    #     # logger=logger,
-    #     auto_lr_find=True
-    # )
-    # trainer.fit(model, datamodule=dm)
-    # model_file = os.path.join(outdir.replace('results','data'), f"models2/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)+' '+str(hparams1.feat_dim)}.pt")
-    # ckt_file = '/headless/thesis/lightning_logs/version_80/checkpoints/epoch=379-step=8739.ckpt'
-    # # model_file = os.path.join(outdir.replace('results','data'), f"models/{(hparams1.aug_mode[0])+' '+(hparams1.aug_mode[1])+' '+str(hparams1.hidden_mlp)+' '+str(hparams1.feat_dim)}.pt")
-    # torch.save(model.encoder[0].state_dict(),model_file)
-    # sys.exit(0)
-
-    # simclr_model = SCM.SimCLR(num_samples=hparams1.train_size,max_epochs=hparams1.epochs,batch_size=hparams1.batch_size,temperature=hparams1.temperature,
-                # input_size=hparams1.input_size,hidden_mlp=hparams1.hidden_mlp,start_lr=hparams1.lr,feat_dim=hparams1.feat_dim).to(device)
-    
-    # simclr_model=SCM.EncodeModel(input_size=hparams1.input_size,output_size=hparams1.hidden_mlp)
-    # simclr_model.load_state_dict(torch.load(ckt_file)['state_dict'])
-
-    # simclr_model.to(device)
-    # simclr_model.load_state_dict(torch.load(model_file))
-    # simclr_model = simclr_model.encoder_in1[0]
-
-
-    # # get data
-    # from torch.utils.data import DataLoader as _DataLoader
-    # from torch.utils.data import Dataset, SubsetRandomSampler, SequentialSampler, RandomSampler
-    # from torch.utils.data.dataset import TensorDataset as _TensorDataset
-    # dataloader = _DataLoader(dataset=_TensorDataset(dataset), batch_size=hparams1.batch_size, drop_last=False,
-    #                          shuffle=False, num_workers=4, pin_memory=cuda)
-    # i = 0
-    # with torch.no_grad():
-    #     for idx, batch in enumerate(dataloader):
-    #         c = batch[0].to(device)
-    #         mu = simclr_model(c)
-    #         if i == 0:
-    #             i = i + 1
-    #             prelatent = mu.clone().detach()
-    #         else:
-    #             prelatent = torch.cat((prelatent,mu),0)
-    # del dataset
-    # print(prelatent.shape)
-
-# simclr-vae
+    # clmb
     if True:
-    	vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=hparams1.hidden_mlp,
-                            alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
-    	modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
-
-    	vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,
-                logfile=logfile, modelfile=modelpath, hparams1=hparams1)
-    # del vae
-    # sys.exit(0)
-
-    # print('', file=logfile)
-    # log('Encoding to latent representation', logfile, 1)
+        vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=hparams1.hidden_mlp,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=False)
+        modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
+        if False:
+            from torch.utils.data import DataLoader as _DataLoader
+            from torch.utils.data.dataset import TensorDataset as _TensorDataset
+            tensor_data_depth, tensor_data_tnf = dataloader.dataset.tensors[0], dataloader.dataset.tensors[1]
+            #print(tensor_data_tnf.shape)
+            random_select = random.sample(range(0,len(mask),1),k=round(0.7*len(mask)))
+            traindataset_subset = _TensorDataset(torch.index_select(tensor_data_depth, 0, torch.tensor(random_select)), torch.index_select(tensor_data_tnf, 0, torch.tensor(random_select)))
+            #traindataset_subset, remain_dataset = _random_split(dataloader.dataset, [train_num, len(mask)-train_num])
+            dataloader_subset = _DataLoader(dataset=traindataset_subset, batch_size=hparams1.batch_size, drop_last=False, shuffle=False, num_workers=0, pin_memory=cuda)
+            vae.trainmodel(dataloader_subset, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams1=hparams1)
+        else:
+            vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams1=hparams1)
     else:
     	modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
     	vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
@@ -262,26 +191,7 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
     vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
     del vae # Needed to free "latent" array's memory references?
 
-# vamb-vae
-    # vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=nlatent,
-    #                         alpha=alpha, beta=beta, dropout=dropout, cuda=cuda)
-
-    # # modelpath = os.path.join(outdir, 'model.pt')
-    # modelpath = os.path.join(outdir.replace('results','data'), "models/vae.pt")
-    # vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,
-    #               logfile=logfile, modelfile=modelpath)
-    # # sys.exit(0)
-
-    # print('', file=logfile)
-    # log('Encoding to latent representation', logfile, 1)
-    # vae_model = vamb.encode.VAE.load(modelpath,cuda=True)
-    # vae_model.to(device)
-    # latent = vae_model.encode(dataloader)
-    
-    # vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
-    # del vae_model # Needed to free "latent" array's memory references?
-# end
-
+    # end
     # vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
 
     # visualize
@@ -305,14 +215,14 @@ def cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclus
     log('Use CUDA for clustering: {}'.format(cuda), logfile, 1)
     log('Separator: {}'.format(None if separator is None else ('"'+separator+'"')),
         logfile, 1)
-# our clustering algorithm
-    from sklearn.cluster import DBSCAN, MiniBatchKMeans
-    from sklearn.metrics.pairwise import pairwise_distances
-    from scipy.sparse import csr_matrix
-    import math
-    it = []
-    def get_all_index(lst: list=[], item=None):
-        return [index for (index,value) in enumerate(lst) if value == item]
+# other clustering algorithm
+#    from sklearn.cluster import DBSCAN, MiniBatchKMeans
+#    from sklearn.metrics.pairwise import pairwise_distances
+#    from scipy.sparse import csr_matrix
+#    import math
+#    it = []
+#    def get_all_index(lst: list=[], item=None):
+#        return [index for (index,value) in enumerate(lst) if value == item]
     '''
     # source: https://gist.github.com/gdbassett/528d816d035f2deaaca1
     # X should be a numpy matrix, very likely sparse matrix: http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.sparse.csr_matrix.html#scipy.sparse.csr_matrix
@@ -325,24 +235,24 @@ def cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclus
     # Distance metric can be any from here: http://scikit-learn.org/stable/modules/generated/sklearn.metrics.pairwise.pairwise_distances.html
     # filemap may be a list of point names in their order in X. If included, row numbers from X will be replaced with names from filemap. 
     '''
-    def canopy(X, T1, T2, distance_metric='euclidean', filemap=None):
-        X = csr_matrix(X)
-        canopies = dict()
-        X1_dist = pairwise_distances(X, metric=distance_metric)
-        canopy_points = set(range(X.shape[0]))
-        while canopy_points:
-            point = canopy_points.pop()
-            i = len(canopies)
-            canopies[i] = {"c":point, "points": list(np.where(X1_dist[point] < T2)[0])}
-            canopy_points = canopy_points.difference(set(np.where(X1_dist[point] < T1)[0]))
-        if filemap:
-            for canopy_id in canopies.keys():
-                canopy = canopies.pop(canopy_id)
-                canopy2 = {"c":filemap[canopy['c']], "points":list()}
-                for point in canopy['points']:
-                    canopy2["points"].append(filemap[point])
-                canopies[canopy_id] = canopy2
-        return canopies
+#    def canopy(X, T1, T2, distance_metric='euclidean', filemap=None):
+#        X = csr_matrix(X)
+#        canopies = dict()
+#        X1_dist = pairwise_distances(X, metric=distance_metric)
+#        canopy_points = set(range(X.shape[0]))
+#        while canopy_points:
+#            point = canopy_points.pop()
+#            i = len(canopies)
+#            canopies[i] = {"c":point, "points": list(np.where(X1_dist[point] < T2)[0])}
+#            canopy_points = canopy_points.difference(set(np.where(X1_dist[point] < T1)[0]))
+#        if filemap:
+#            for canopy_id in canopies.keys():
+#                canopy = canopies.pop(canopy_id)
+#                canopy2 = {"c":filemap[canopy['c']], "points":list()}
+#                for point in canopy['points']:
+#                    canopy2["points"].append(filemap[point])
+#                canopies[canopy_id] = canopy2
+#        return canopies
 
 # dbscan
     # gregarious,outlier = range(len(latent)),[]
@@ -507,7 +417,7 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, bampaths, rpkmpath, 
     begintime = time.time()
 
     # Get TNFs, save as npz
-    if True:
+    if False:
         tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, tnfpath, namespath,
                                                 lengthspath, mincontiglength, logfile)
         vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'contiglengths.npz'), contiglengths)
@@ -627,7 +537,7 @@ def main():
     trainos = parser.add_argument_group(title='Training options', description=None)
 
     trainos.add_argument('-e', dest='nepochs', metavar='', type=int,
-                        default=600, help='epochs [600]')
+                        default=1250, help='epochs [900]')
     trainos.add_argument('-t', dest='batchsize', metavar='', type=int,
                         default=256, help='starting batch size [256]')
     trainos.add_argument('-q', dest='batchsteps', metavar='', type=int, nargs='*',

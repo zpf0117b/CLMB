@@ -108,7 +108,7 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
 
     return dataloader, mask
 
-from . import simclr_module as SCM
+from . import augmentation
 class VAE(_nn.Module):
     """Variational autoencoder, subclass of torch.nn.Module.
     Instantiate with:
@@ -199,9 +199,9 @@ class VAE(_nn.Module):
         self.dropoutlayer = _nn.Dropout(p=self.dropout)
 
         if self.contrast:
-            self.weight_contrastive = 1.35 * 100
-            self.weight_ce_sse = 1
-            self.weight_kld = 0.001
+            self.weight_contrastive = 1.35
+            self.weight_ce_sse = 9
+            self.weight_kld = 0.04977
         if cuda:
             self.cuda()
 
@@ -405,10 +405,10 @@ class VAE(_nn.Module):
                 epoch_cesseloss += loss_ce_sse.data.item()
                 epoch_clloss += loss_contrastive.data.item()
 
-            if epoch == 0 or epoch == 10:
+            if epoch < 2:
                 self.weight_contrastive = 1.35 * round(epoch_cesseloss / epoch_clloss, 6)
-                self.weight_ce_sse = 1
-                self.weight_kld = 0.001 * round(epoch_cesseloss / epoch_kldloss, 6)
+                self.weight_ce_sse = 9
+                self.weight_kld = 0.04977 * round(epoch_cesseloss / epoch_kldloss, 6)
 
             if logfile is not None:
                 print('\tEpoch: {}\tLoss: {:.6f}\tCL: {:.7f}\tCE SSE: {:.6f}\tKLD: {:.4f}\tBatchsize: {}'.format(
@@ -574,11 +574,13 @@ class VAE(_nn.Module):
         # Train
         # simclr
         if self.contrast:
-            dm = SCM.AugmentationDataModule(hparams1, _torch.cat(dataloader.dataset.tensors, 1), aug_mode=hparams1.aug_mode)
             for epoch in range(nepochs):
-                dm.setup()
-                dl = dm.train_dataloader()
-                ds0, ds1 = dl.dataset.tensors[0], dl.dataset.tensors[1]
+                augment_met = [augmentation.GaussianNoise(), augmentation.NumericalChange(),augmentation.WordDrop(), augmentation.FragmentTransfer(),augmentation.Reverse()]
+                aug_method0 = None if hparams1.aug_mode[0] == None else augment_met[hparams1.aug_mode[0]]
+                aug_method1 = None if hparams1.aug_mode[1] == None else augment_met[hparams1.aug_mode[1]]
+                ds0 =  _torch.cat(dataloader.dataset.tensors, 1) if aug_method0 is None else aug_method0(_torch.cat(dataloader.dataset.tensors, 1),mode=hparams1.aug_mode)
+                ds1 =  _torch.cat(dataloader.dataset.tensors, 1) if aug_method1 is None else aug_method1(_torch.cat(dataloader.dataset.tensors, 1),mode=hparams1.aug_mode)
+                
                 if epoch % 10 == 0:
                     print('d', _torch.sum(_torch.pow(_torch.sub(ds0,ds1), 2)), file=logfile, end='\n')
                 dataloader = _DataLoader(dataset=_TensorDataset(ds0.narrow(1, 0, self.nsamples), ds0.narrow(1, self.nsamples, self.ntnf), ds1.narrow(1, 0, self.nsamples), ds1.narrow(1, self.nsamples, self.ntnf)),
@@ -590,8 +592,9 @@ class VAE(_nn.Module):
                 self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, hparams1)
         # vamb
         else:
+            from argparse import Namespace
             for epoch in range(nepochs):
-                dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile)
+                dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
 
         # Save weights - Lord forgive me, for I have sinned when catching all exceptions
         if modelfile is not None:

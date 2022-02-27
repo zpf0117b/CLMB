@@ -11,7 +11,7 @@ class GaussianNoise():
         
     def __call__(self, sequence, mode):
         def get_parameter(m, mode):
-            para = [[m*0.15 if m != 0 else 1/100, m/100 if m != 0 else 1/100, m/100 if m != 0 else 1/100, m/100 if m != 0 else 1/100, m/100 if m != 0 else 1/100, m/100 if m != 0 else 1/100],
+            para = [[m*0.05 if m != 0 else 1/100, m/100 if m != 0 else 1/100, m/100 if m != 0 else 1/100, m/100 if m != 0 else 1/100, m/100 if m != 0 else 1/100, m/100 if m != 0 else 1/100],
                     [m/100 if m != 0 else 1/100, None, None, None, None, None],
                     [m/100 if m != 0 else 1/100, None, None, None, None, None],
                     [m/100 if m != 0 else 1/100, None, None, None, None, None],
@@ -19,8 +19,9 @@ class GaussianNoise():
                     [m/100 if m != 0 else 1/100, None, None, None, None, None]] # scale
             return para[mode[0]][mode[1]]
         var, m = torch.var(sequence), torch.mean(sequence)
-        torch.seed()
-        gaussian = torch.normal(torch.tensor(0), torch.sqrt(var), size=sequence.shape)
+        gen = torch.Generator(device=var.device)
+        gen.manual_seed(torch.seed())
+        gaussian = torch.normal(torch.tensor(0), torch.sqrt(var), size=sequence.shape, generator=gen)
         noise = torch.divide(gaussian, torch.max(gaussian) / get_parameter(m, mode))
         return torch.add(sequence, noise)
         # aug_sequence = torch.full_like(sequence, 0)
