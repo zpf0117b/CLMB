@@ -11,6 +11,9 @@ changelog
 .ipynb_checkpoints
 build/
 dist/
+vamb/visualize.py
+vamb/test*
+vamb/vae.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

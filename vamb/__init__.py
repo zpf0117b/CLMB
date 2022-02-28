@@ -19,9 +19,13 @@ General workflow:
 7) Split bins using vamb.vambtools
 """
 
-__authors__ = 'Jakob Nybo Nissen', 'Simon Rasmussen'
+__authors__ = 'Pengfei Zhang'
+"""
+Framework constructed from https://github.com/RasmussenLab/vamb
+authors: 'Jakob Nybo Nissen', 'Simon Rasmussen'
+"""
 __licence__ = 'MIT'
-__version__ = (3, 0, 2)
+__version__ = (1, 0, 0)
 
 import sys as _sys
 if _sys.version_info[:2] < (3, 5):
