@@ -194,9 +194,9 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
     # vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
 
     # visualize
-    # from . import visualize
+    # from . import test_visualize
     # visual_model = {'simclr':vae} # 'vae':vae_model
-    # visualize.visualize(hparams1,dataloader,visual_model,method='umap',**{'select':18})
+    # test_visualize.visualize(hparams1,dataloader,visual_model,method='umap',**{'select':18})
 
     elapsed = round(time.time() - begintime, 2)
     log('Trained VAE and encoded in {} seconds'.format(elapsed), logfile, 1)
