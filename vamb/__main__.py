@@ -167,7 +167,7 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
 
     # clmb
     if True:
-        vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=hparams1.hidden_mlp,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=False)
+        vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=hparams1.hidden_mlp,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
         modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
         if False:
             from torch.utils.data import DataLoader as _DataLoader
@@ -182,9 +182,9 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
         else:
             vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams1=hparams1)
     else:
-    	modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
-    	vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
-    	vae.to(('cuda' if cuda else 'cpu'))
+        modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
+        vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
+        vae.to(('cuda' if cuda else 'cpu'))
 
     latent = vae.encode(dataloader)
     vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)

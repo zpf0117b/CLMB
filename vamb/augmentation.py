@@ -20,13 +20,12 @@ class GaussianNoise():
             return para[mode[0]][mode[1]]
         var, m = torch.var(sequence), torch.mean(sequence)
         gen = torch.Generator(device=var.device)
-        gen.manual_seed(torch.seed())
+        gen.manual_seed(42)
         gaussian = torch.normal(torch.tensor(0), torch.sqrt(var), size=sequence.shape, generator=gen)
         noise = torch.divide(gaussian, torch.max(gaussian) / get_parameter(m, mode))
         return torch.add(sequence, noise)
         # aug_sequence = torch.full_like(sequence, 0)
         # for i in range(sequence.shape[0]):
-        #     torch.seed()
         #     var, m = torch.var_mean(sequence[i])
         #     gaussian = (torch.normal(0., float(torch.sqrt(var)), size=(1,sequence.shape[1])))[0]
         #     noise = torch.divide(gaussian, torch.max(gaussian)/get_parameter(m, mode))
@@ -49,7 +48,6 @@ class NumericalChange():
                 [None, 0.008, None, None, None, None]] # alpha
         aug_sequence = torch.full_like(sequence, 0)
         for i in range(sequence.shape[0]):
-            torch.seed()
             a1, a2 = torch.bernoulli(torch.full_like(sequence[i], 0.7)), torch.bernoulli(torch.full_like(sequence[i], 0.3))
             a2 = torch.add(-a2,1.0)
             b = torch.mul(torch.sub(torch.add(a1,a2), 1),para[mode[0]][mode[1]])
@@ -70,7 +68,6 @@ class WordDrop():
                 [None, None, 0.0001, None, None, None]] # cut
         aug_sequence = torch.full_like(sequence, 0)
         for i in range(sequence.shape[0]):
-            torch.seed()
             b = torch.bernoulli(torch.full_like(sequence[i], 1-para[mode[0]][mode[1]]))
             aug_sequence[i] = torch.mul(sequence[i], b)
             # print(torch.sum(aug_sequence[i]-sequence[i]))
@@ -124,7 +121,6 @@ class Reverse():
         # l = list(range(dim))
         # random.shuffle(l)
         # for k in range(sequence.shape[0]):
-        #     random.seed(k)
         #     # left, right = random.sample(l, 2)
         #     if left < right:
         #         b = torch.cat((sequence[k][:left], torch.flip(sequence[k][left:right], dims=[0]), sequence[k][right:]), dim=0)
@@ -202,7 +198,6 @@ class Reverse():
             
         # aug_sequence = torch.full_like(sequence, 0)
         # for k in range(sequence.shape[0]):
-        #     torch.seed()
         #     left = random.randint(0, para[mode[0]][mode[1]])
         #     a = torch.gather(sequence[k],0,torch.tensor(around_seq_dict[left]))
         #     aug_sequence[k] = a

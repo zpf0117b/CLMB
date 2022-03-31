@@ -135,7 +135,7 @@ def visualize(hparams1,dl,visual_model:dict,method='pca', **kwargs):
         new_model.usecuda = True if hparams1.device=='cuda' else False
         prelatent_vae = torch.from_numpy(new_model.encode(dataloader))
 
-    np.random.seed(5)
+    np.random.seed(42)
     # X = prelatent.cpu().numpy()
     if k < 11:
         colors = ['#ffff00', '#ff66ff', '#ff0000', '#996633', '#66ccff', '#66cc00', '#660066', '#339999', '#000066', '#000000']
