@@ -182,9 +182,9 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
         else:
             vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams1=hparams1)
     else:
-        modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
-        vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
-        vae.to(('cuda' if cuda else 'cpu'))
+    	modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
+    	vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
+    	vae.to(('cuda' if cuda else 'cpu'))
 
     latent = vae.encode(dataloader)
     vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
@@ -194,9 +194,9 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
     # vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
 
     # visualize
-    # from . import test_visualize
+    # from . import visualize
     # visual_model = {'simclr':vae} # 'vae':vae_model
-    # test_visualize.visualize(hparams1,dataloader,visual_model,method='umap',**{'select':18})
+    # visualize.visualize(hparams1,dataloader,visual_model,method='umap',**{'select':18})
 
     elapsed = round(time.time() - begintime, 2)
     log('Trained VAE and encoded in {} seconds'.format(elapsed), logfile, 1)
@@ -536,11 +536,11 @@ def main():
     trainos = parser.add_argument_group(title='Training options', description=None)
 
     trainos.add_argument('-e', dest='nepochs', metavar='', type=int,
-                        default=1250, help='epochs [900]')
+                        default=250, help='epochs [900]')
     trainos.add_argument('-t', dest='batchsize', metavar='', type=int,
                         default=256, help='starting batch size [256]')
     trainos.add_argument('-q', dest='batchsteps', metavar='', type=int, nargs='*',
-                        default=[25, 75, 150, 300], help='double batch size at epochs [25 75 150 300]')
+                        default=[25, 75, 100, 120], help='double batch size at epochs [25 75 150 300]')
     trainos.add_argument('-r', dest='lrate',  metavar='',type=float,
                         default=1e-3, help='learning rate [0.001]')
 

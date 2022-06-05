@@ -17,7 +17,7 @@ __cmd_doc__ = """Encode depths and TNF using a VAE to latent representation"""
 import numpy as _np
 import torch as _torch
 _torch.manual_seed(42)
-
+#_torch.seed()
 
 import math
 
@@ -143,7 +143,7 @@ class VAE(_nn.Module):
             nhiddens = [512, 512] if nsamples > 1 else [256, 256]
 
         if dropout is None:
-            dropout = 0.2 if nsamples > 1 else 0.0
+            dropout = 0.0 if nsamples > 1 else 0.0
 
         if any(i < 1 for i in nhiddens):
             raise ValueError('Minimum 1 neuron per layer, not {}'.format(min(nhiddens)))
@@ -199,9 +199,9 @@ class VAE(_nn.Module):
         self.dropoutlayer = _nn.Dropout(p=self.dropout)
 
         if self.contrast:
-            self.weight_contrastive = 1.35
-            self.weight_ce_sse = 9
-            self.weight_kld = 0.04977
+            self.weight_contrastive = 1000
+            self.weight_ce_sse = 1
+            self.weight_kld = 0.005
         if cuda:
             self.cuda()
 
@@ -211,6 +211,7 @@ class VAE(_nn.Module):
         # Hidden layers
         for encoderlayer, encodernorm in zip(self.encoderlayers, self.encodernorms):
             tensor = encodernorm(self.dropoutlayer(self.relu(encoderlayer(tensor))))
+            #tensor = encodernorm(self.relu(encoderlayer(tensor)))
             tensors.append(tensor)
 
         # Latent layers
@@ -248,6 +249,7 @@ class VAE(_nn.Module):
 
         for decoderlayer, decodernorm in zip(self.decoderlayers, self.decodernorms):
             tensor = decodernorm(self.dropoutlayer(self.relu(decoderlayer(tensor))))
+            #tensor = decodernorm(self.relu(decoderlayer(tensor)))
             tensors.append(tensor)
 
         reconstruction = self.outputlayer(tensor)
@@ -288,7 +290,7 @@ class VAE(_nn.Module):
 
         return loss, ce, sse, kld
 
-    def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile, hparams1):
+    def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile, hparams1, awl=None):
         self.train()
 # VAMB
         if not self.contrast:
@@ -383,32 +385,37 @@ class VAE(_nn.Module):
                 loss2, ce2, sse2, kld2 = self.calc_loss(depths_in2, depths_out2, tnf_in2,
                                                     tnf_out2, mu2, logsigma2)
 
-                if self.nsamples > 1:
-                    ce_weight = (1 - self.alpha) / math.log(self.nsamples)
-                else:
-                    ce_weight = 1 - self.alpha
-                sse_weight = self.alpha / self.ntnf
-                kld_weight = 1 / (self.nlatent * 200)
+                #if self.nsamples > 1:
+                #    ce_weight = (1 - self.alpha) / math.log(self.nsamples)
+                #else:
+                #    ce_weight = 1 - self.alpha
+                #sse_weight = self.alpha / self.ntnf
+                #kld_weight = 1 / (self.nlatent * 200)
 
-                loss_contrastive = loss3 / (self.ntnf + self.nsamples)
-                loss_ce_sse = ((ce1 + ce2) * ce_weight + (sse1 + sse2) * sse_weight)
-                loss_kld = (kld1 + kld2) * kld_weight
+                #loss_contrastive = loss3 / (self.ntnf + self.nsamples)
+                #loss_ce_sse = ((ce1 + ce2) * ce_weight + (sse1 + sse2) * sse_weight)
+                #loss_kld = (kld1 + kld2) * kld_weight
 
-                loss = self.weight_contrastive * loss_contrastive + self.weight_ce_sse * loss_ce_sse + self.weight_kld * loss_kld
+                #loss = self.weight_contrastive * loss_contrastive + self.weight_ce_sse * loss_ce_sse + self.weight_kld * loss_kld
+                loss = awl(loss3,  50*(loss1+loss2))
 
                 loss.backward()
                 optimizer.step()
-                print(self.weight_contrastive * loss_contrastive.data.item(), self.weight_ce_sse * loss_ce_sse.data.item(), self.weight_kld * loss_kld.data.item(), loss.data.item(), file=logfile)
+                #print(self.weight_contrastive * loss_contrastive.data.item(), self.weight_ce_sse * loss_ce_sse.data.item(), self.weight_kld * loss_kld.data.item(), loss.data.item(), file=logfile)
+                print(loss1,loss2,loss3,file=logfile)
 
                 epoch_loss += loss.data.item()
-                epoch_kldloss += loss_kld.data.item()
-                epoch_cesseloss += loss_ce_sse.data.item()
-                epoch_clloss += loss_contrastive.data.item()
+                epoch_kldloss += (kld1+kld2).data.item()
+                epoch_cesseloss += (ce1+ce2).data.item()
+                epoch_clloss += (sse1+sse2).data.item()
 
-            if epoch < 2:
-                self.weight_contrastive = 1.35 * round(epoch_cesseloss / epoch_clloss, 6)
-                self.weight_ce_sse = 9
-                self.weight_kld = 0.04977 * round(epoch_cesseloss / epoch_kldloss, 6)
+            if epoch < 0:
+                self.weight_contrastive = 0.15 * epoch_cesseloss / epoch_clloss
+                self.weight_ce_sse = 1
+                self.weight_kld = 0.005 * epoch_cesseloss / epoch_kldloss
+                #print(epoch_cesseloss / epoch_clloss, epoch_cesseloss / epoch_kldloss)
+            #else:
+             #   exit(0)
 
             if logfile is not None:
                 print('\tEpoch: {}\tLoss: {:.6f}\tCL: {:.7f}\tCE SSE: {:.6f}\tKLD: {:.4f}\tBatchsize: {}'.format(
@@ -552,7 +559,6 @@ class VAE(_nn.Module):
 
         # Get number of features
         ncontigs, nsamples = dataloader.dataset.tensors[0].shape
-        optimizer = _Adam(self.parameters(), lr=lrate)
 
         if logfile is not None:
             print('\tNetwork properties:', file=logfile)
@@ -574,6 +580,9 @@ class VAE(_nn.Module):
         # Train
         # simclr
         if self.contrast:
+            from . import AutomaticWeightedLoss
+            awl = AutomaticWeightedLoss.AutomaticWeightedLoss(3)
+            optimizer = _Adam([{'params':self.parameters(), 'lr':lrate}, {'params': awl.parameters(), 'weight_decay': 0}])
             for epoch in range(nepochs):
                 augment_met = [augmentation.GaussianNoise(), augmentation.NumericalChange(),augmentation.WordDrop(), augmentation.FragmentTransfer(),augmentation.Reverse()]
                 aug_method0 = None if hparams1.aug_mode[0] == None else augment_met[hparams1.aug_mode[0]]
@@ -589,10 +598,11 @@ class VAE(_nn.Module):
                                 num_workers=0, pin_memory=False,
                                 # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams1.train_size))),batch_size=hparams1.batch_size,drop_last=True),
                                 drop_last=False)
-                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, hparams1)
+                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, hparams1, awl)
         # vamb
         else:
             from argparse import Namespace
+            optimizer = _Adam(self.parameters(), lr=lrate)
             for epoch in range(nepochs):
                 dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
 
@@ -605,7 +615,7 @@ class VAE(_nn.Module):
 
         return None
 
-    def nt_xent_loss(self, out_1, out_2, temperature=10, eps=1e-6):
+    def nt_xent_loss(self, out_1, out_2, temperature=2, eps=1e-6):
         """
             assume out_1 and out_2 are normalized
             out_1: [batch_size, dim]
