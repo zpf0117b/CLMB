@@ -38,7 +38,6 @@ cpdef void _kmercounts(unsigned char[::1] bytesarray, int k, int[::1] counts):
     The bytearray is expected to be np.uint8 of bytevalues of the contig.
     Only values 64, 67, 71, 84 are accepted, all others are skipped.
     The counts is expected to be an array of 4^k 32-bit integers with value 0.
-    计数重叠群的四核苷酸并将其放入计数载体。该字节数组应为重叠群的字节值的np.uint8(no negative and range from 0 to 255)。仅接受值64、67、71、84，其他所有值均被跳过。
     """
 
     cdef unsigned int kmer = 0

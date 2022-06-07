@@ -14,12 +14,14 @@ Usage:
 
 __cmd_doc__ = """Encode depths and TNF using a VAE to latent representation"""
 
+from random import sample
 import numpy as _np
 import torch as _torch
 _torch.manual_seed(42)
 #_torch.seed()
 
 import math
+from argparse import Namespace
 
 from torch import nn as _nn
 from torch.optim import Adam as _Adam
@@ -33,7 +35,7 @@ import vamb.vambtools as _vambtools
 if _torch.__version__ < '0.4':
     raise ImportError('PyTorch version must be 0.4 or newer')
 
-def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
+def make_dataloader(rpkm, tnfs, batchsize=256, destroy=False, cuda=False, contrastive=True, hparams=None):
     """Create a DataLoader and a contig mask from RPKM and TNF.
 
     The dataloader is an object feeding minibatches of contigs to the VAE.
@@ -52,6 +54,29 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
         DataLoader: An object feeding data to the VAE
         mask: A boolean mask of which contigs are kept
     """
+    if contrastive:
+        assert hparams, "hyper parameters for CLMB is required"
+        if hparams.aug_mode == (0, 0):
+        # Default case: random select augmentation methods during training. This option cost more memory and time.
+            norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr = tnfs[0], tnfs[1], tnfs[2], tnfs[3], tnfs[4]
+            if not len(rpkm) == len(norm_arr) == len(gaussian_arr) == len(trans_arr) == len(traver_arr) == len(mutated_arr):
+                raise ValueError('Lengths of RPKM and TNF must be the same')
+        else:
+        # Specify 2 augmentation methods for contrastive learning training 
+            norm_arr = tnfs[0]
+            aug1_arr, aug2_arr = tnfs[hparams.aug_mode[0]], tnfs[hparams.aug_mode[1]]
+            if not len(aug1_arr) == len(norm_arr) == len(aug2_arr):
+                raise ValueError('Lengths of RPKM and TNF must be the same')
+
+        if not (rpkm.dtype == norm_arr.dtype == _np.float32):
+            raise ValueError('TNF and RPKM must be Numpy arrays of dtype float32')
+    else:
+        tnf = tnfs[0]
+        if len(rpkm) != len(tnf):
+            raise ValueError('Lengths of RPKM and TNF must be the same')
+
+        if not (rpkm.dtype == tnf.dtype == _np.float32):
+            raise ValueError('TNF and RPKM must be Numpy arrays of dtype float32')
 
     if not isinstance(rpkm, _np.ndarray) or not isinstance(tnf, _np.ndarray):
         raise ValueError('TNF and RPKM must be Numpy arrays')
@@ -59,13 +84,10 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
     if batchsize < 1:
         raise ValueError('Minimum batchsize of 1, not {}'.format(batchsize))
 
-    if len(rpkm) != len(tnf):
-        raise ValueError('Lengths of RPKM and TNF must be the same')
-
-    if not (rpkm.dtype == tnf.dtype == _np.float32):
-        raise ValueError('TNF and RPKM must be Numpy arrays of dtype float32')
-
-    mask = tnf.sum(axis=1) != 0
+    if contrastive:
+        mask = norm_arr.sum(axis=1) != 0
+    else:
+        mask = tnf.sum(axis=1) != 0
 
     # If multiple samples, also include nonzero depth as requirement for accept
     # of sequences
@@ -79,12 +101,31 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
 
     if destroy:
         rpkm = _vambtools.numpy_inplace_maskarray(rpkm, mask)
-        tnf = _vambtools.numpy_inplace_maskarray(tnf, mask)
+        if contrastive:
+            if hparams.aug_mode == (0, 0):
+                norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr = _vambtools.numpy_inplace_maskarray(norm_arr, mask), \
+                    _vambtools.numpy_inplace_maskarray(gaussian_arr, mask), _vambtools.numpy_inplace_maskarray(trans_arr, mask), \
+                        _vambtools.numpy_inplace_maskarray(traver_arr, mask), _vambtools.numpy_inplace_maskarray(mutated_arr, mask)
+            else:
+                norm_arr, aug1_arr, aug2_arr = _vambtools.numpy_inplace_maskarray(norm_arr, mask), \
+                    _vambtools.numpy_inplace_maskarray(aug1_arr, mask), _vambtools.numpy_inplace_maskarray(aug2_arr, mask)
+        else:
+            tnf = _vambtools.numpy_inplace_maskarray(tnf, mask)
     else:
         # The astype operation does not copy due to "copy=False", but the masking
         # operation does.
         rpkm = rpkm[mask].astype(_np.float32, copy=False)
-        tnf = tnf[mask].astype(_np.float32, copy=False)
+        if contrastive:
+            if hparams.aug_mode == (0, 0):
+                norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr = norm_arr[mask].astype(_np.float32, copy=False), \
+                    gaussian_arr[mask].astype(_np.float32, copy=False), trans_arr[mask].astype(_np.float32, copy=False), \
+                        traver_arr[mask].astype(_np.float32, copy=False), mutated_arr[mask].astype(_np.float32, copy=False)
+            else:
+                norm_arr, aug1_arr, aug2_arr = norm_arr[mask].astype(_np.float32, copy=False), \
+                    aug1_arr[mask].astype(_np.float32, copy=False), aug2_arr[mask].astype(_np.float32, copy=False)
+
+        else:
+            tnf = tnf[mask].astype(_np.float32, copy=False)
 
     # If multiple samples, normalize to sum to 1, else zscore normalize
     if rpkm.shape[1] > 1:
@@ -94,21 +135,34 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
 
     # Normalize arrays and create the Tensors (the tensors share the underlying memory)
     # of the Numpy arrays
-    _vambtools.zscore(tnf, axis=0, inplace=True)
     depthstensor = _torch.from_numpy(rpkm)
-    tnftensor = _torch.from_numpy(tnf)
-    # cattensor = _torch.cat((tnftensor,depthstensor),1)
-    # dataset = _TensorDataset(cattensor)
 
     # Create dataloader
     n_workers = 0
-    dataset = _TensorDataset(depthstensor, tnftensor)
+    if contrastive:
+        if hparams.aug_mode == (0, 0):
+            _vambtools.zscore(norm_arr, axis=0, inplace=True)
+            _vambtools.zscore(gaussian_arr, axis=0, inplace=True)
+            _vambtools.zscore(trans_arr, axis=0, inplace=True)
+            _vambtools.zscore(traver_arr, axis=0, inplace=True)
+            _vambtools.zscore(mutated_arr, axis=0, inplace=True)
+            dataset = _TensorDataset(depthstensor, _torch.from_numpy(norm_arr), _torch.from_numpy(gaussian_arr), \
+                _torch.from_numpy(trans_arr), _torch.from_numpy(traver_arr), _torch.from_numpy(mutated_arr))
+        else:
+            _vambtools.zscore(norm_arr, axis=0, inplace=True)
+            _vambtools.zscore(aug1_arr, axis=0, inplace=True)
+            _vambtools.zscore(aug2_arr, axis=0, inplace=True)
+            dataset = _TensorDataset(depthstensor, _torch.from_numpy(norm_arr), _torch.from_numpy(aug1_arr), _torch.from_numpy(aug2_arr))
+    else:
+        _vambtools.zscore(tnf, axis=0, inplace=True)
+        dataset = _TensorDataset(depthstensor, _torch.from_numpy(tnf))
     dataloader = _DataLoader(dataset=dataset, batch_size=batchsize, drop_last=False,
                              shuffle=False, num_workers=n_workers, pin_memory=cuda)
 
     return dataloader, mask
 
 from . import augmentation
+from . import AutomaticWeightedLoss
 class VAE(_nn.Module):
     """Variational autoencoder, subclass of torch.nn.Module.
     Instantiate with:
@@ -127,7 +181,7 @@ class VAE(_nn.Module):
     0.99 and 0.0, respectively
     """
 
-    def __init__(self, nsamples, nhiddens=None, nlatent=32, alpha=None,
+    def __init__(self, ntnf, nsamples, nhiddens=None, nlatent=32, alpha=None,
                  beta=200, dropout=0.2, cuda=False, c=False):
         if nlatent < 1:
             raise ValueError('Minimum 1 latent neuron, not {}'.format(latent))
@@ -162,7 +216,7 @@ class VAE(_nn.Module):
         # Initialize simple attributes
         self.usecuda = cuda
         self.nsamples = nsamples
-        self.ntnf = 103
+        self.ntnf = ntnf
         self.alpha = alpha
         self.beta = beta
         self.nhiddens = nhiddens
@@ -198,10 +252,6 @@ class VAE(_nn.Module):
         self.softplus = _nn.Softplus()
         self.dropoutlayer = _nn.Dropout(p=self.dropout)
 
-        if self.contrast:
-            self.weight_contrastive = 1000
-            self.weight_ce_sse = 1
-            self.weight_kld = 0.005
         if cuda:
             self.cuda()
 
@@ -290,7 +340,7 @@ class VAE(_nn.Module):
 
         return loss, ce, sse, kld
 
-    def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile, hparams1, awl=None):
+    def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile, hparams, awl=None):
         self.train()
 # VAMB
         if not self.contrast:
@@ -348,60 +398,49 @@ class VAE(_nn.Module):
             epoch_cesseloss = 0
             epoch_clloss = 0
 
-            data_loader = _DataLoader(dataset=data_loader.dataset,
-                                batch_size=hparams1.batch_size, 
-                                shuffle=True, 
-                                num_workers=0, pin_memory=True,
-                                # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams1.train_size))),batch_size=hparams1.batch_size,drop_last=True),
-                                drop_last=False)
-            for depths_in1, tnf_in1, depths_in2, tnf_in2 in data_loader:
+            if hparams.aug_mode == (0, 0):
+                depthstensor, norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr = data_loader.dataset.tensors
+                # Sample the augmentation methods without replacement. We use the sample amount to determine the frequency of methods.  
+                sample_list = sample([1,2,2,2,2,2,2,3,3,3,4,4,4,4,4,4,4,4,4], 2)
+                backup_augmentation_method = [norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr]
+                aug_arr1, aug_arr2 = backup_augmentation_method(sample_list[0]), backup_augmentation_method(sample_list[1])
+            else:
+                depthstensor, norm_arr, aug_arr1, aug_arr2 = data_loader.dataset.tensors
+            data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_arr1, aug_arr2),
+                                    batch_size=hparams.batch_size, 
+                                    shuffle=True, 
+                                    num_workers=0, pin_memory=True,
+                                    # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams.train_size))),batch_size=hparams.batch_size,drop_last=True),
+                                    drop_last=True)
+            for depths, aug_arr1, aug_arr2 in data_loader:
                 # print(_torch.sum(tnf_in1),tnf_in1.shape, file=logfile)
-                depths_in1, tnf_in1, depths_in2, tnf_in2 = depths_in1, tnf_in1, depths_in2, tnf_in2
+                # depths_in1, tnf_in1, depths_in2, tnf_in2 = depths_in1, tnf_in1, depths_in2, tnf_in2
                 # depths_in1, tnf_in1, depths_in2, tnf_in2 = depths_in1[0], tnf_in1[0], depths_in2[0], tnf_in2[0]
-                depths_in1.requires_grad = True
-                depths_in2.requires_grad = True
-                tnf_in1.requires_grad = True
-                tnf_in2.requires_grad = True
+                depths.requires_grad = True
+                aug_arr1.requires_grad = True
+                aug_arr2.requires_grad = True
 
                 if self.usecuda:
-                    depths_in1 = depths_in1.cuda()
-                    depths_in2 = depths_in2.cuda()
-                    tnf_in1 = tnf_in1.cuda()
-                    tnf_in2 = tnf_in2.cuda()
+                    depths = depths.cuda()
+                    aug_arr1 = aug_arr1.cuda()
+                    aug_arr2 = aug_arr2.cuda()
 
                 optimizer.zero_grad()
 
-                depths_out1, tnf_out1, mu1, logsigma1 = self(depths_in1, tnf_in1)
-                depths_out2, tnf_out2, mu2, logsigma2 = self(depths_in2, tnf_in2)
+                depths_out1, tnf_out1, mu1, logsigma1 = self(depths, aug_arr1)
+                depths_out2, tnf_out2, mu2, logsigma2 = self(depths, aug_arr2)
 
-                # loss1 = self.criterion(mu1, mu2)
-                # loss1 = self.nt_xent_loss(depths_proj1, depths_proj2, self.temperature)
-                # loss3 = self.nt_xent_loss(mu1, mu2)
-                # loss3 = self.nt_xent_loss(depths_out1, depths_out2) * (10/113) + self.nt_xent_loss(tnf_out1, tnf_out2) * (103 / 113)
-                loss3 = self.nt_xent_loss(_torch.cat((depths_out1, tnf_out1), 1), _torch.cat((depths_out2, tnf_out2), 1))
+                loss3 = self.nt_xent_loss(_torch.cat((depths, aug_arr1), 1), _torch.cat((depths, aug_arr2), 1), temperature=hparams.temperature)
 
-                loss1, ce1, sse1, kld1 = self.calc_loss(depths_in1, depths_out1, tnf_in1,
+                loss1, ce1, sse1, kld1 = self.calc_loss(depths, depths_out1, aug_arr1,
                                                     tnf_out1, mu1, logsigma1)
-                loss2, ce2, sse2, kld2 = self.calc_loss(depths_in2, depths_out2, tnf_in2,
+                loss2, ce2, sse2, kld2 = self.calc_loss(depths, depths_out2, aug_arr2,
                                                     tnf_out2, mu2, logsigma2)
 
-                #if self.nsamples > 1:
-                #    ce_weight = (1 - self.alpha) / math.log(self.nsamples)
-                #else:
-                #    ce_weight = 1 - self.alpha
-                #sse_weight = self.alpha / self.ntnf
-                #kld_weight = 1 / (self.nlatent * 200)
-
-                #loss_contrastive = loss3 / (self.ntnf + self.nsamples)
-                #loss_ce_sse = ((ce1 + ce2) * ce_weight + (sse1 + sse2) * sse_weight)
-                #loss_kld = (kld1 + kld2) * kld_weight
-
-                #loss = self.weight_contrastive * loss_contrastive + self.weight_ce_sse * loss_ce_sse + self.weight_kld * loss_kld
                 loss = awl(loss3,  50*(loss1+loss2))
 
                 loss.backward()
                 optimizer.step()
-                #print(self.weight_contrastive * loss_contrastive.data.item(), self.weight_ce_sse * loss_ce_sse.data.item(), self.weight_kld * loss_kld.data.item(), loss.data.item(), file=logfile)
                 print(loss1,loss2,loss3,file=logfile)
 
                 epoch_loss += loss.data.item()
@@ -409,10 +448,10 @@ class VAE(_nn.Module):
                 epoch_cesseloss += (ce1+ce2).data.item()
                 epoch_clloss += (sse1+sse2).data.item()
 
-            if epoch < 0:
-                self.weight_contrastive = 0.15 * epoch_cesseloss / epoch_clloss
-                self.weight_ce_sse = 1
-                self.weight_kld = 0.005 * epoch_cesseloss / epoch_kldloss
+            # if epoch < 0:
+            #     self.weight_contrastive = 0.15 * epoch_cesseloss / epoch_clloss
+            #     self.weight_ce_sse = 1
+            #     self.weight_kld = 0.005 * epoch_cesseloss / epoch_kldloss
                 #print(epoch_cesseloss / epoch_clloss, epoch_cesseloss / epoch_kldloss)
             #else:
              #   exit(0)
@@ -524,7 +563,7 @@ class VAE(_nn.Module):
         return vae
 
     def trainmodel(self, dataloader, nepochs=500, lrate=1e-3,
-                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams1=None):
+                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams=None):
         """Train the autoencoder from depths array and tnf array.
         Inputs:
             dataloader: DataLoader made by make_dataloader
@@ -580,28 +619,27 @@ class VAE(_nn.Module):
         # Train
         # simclr
         if self.contrast:
-            from . import AutomaticWeightedLoss
-            awl = AutomaticWeightedLoss.AutomaticWeightedLoss(3)
+            awl = AutomaticWeightedLoss.AutomaticWeightedLoss(2)
             optimizer = _Adam([{'params':self.parameters(), 'lr':lrate}, {'params': awl.parameters(), 'weight_decay': 0}])
-            for epoch in range(nepochs):
-                augment_met = [augmentation.GaussianNoise(), augmentation.NumericalChange(),augmentation.WordDrop(), augmentation.FragmentTransfer(),augmentation.Reverse()]
-                aug_method0 = None if hparams1.aug_mode[0] == None else augment_met[hparams1.aug_mode[0]]
-                aug_method1 = None if hparams1.aug_mode[1] == None else augment_met[hparams1.aug_mode[1]]
-                ds0 =  _torch.cat(dataloader.dataset.tensors, 1) if aug_method0 is None else aug_method0(_torch.cat(dataloader.dataset.tensors, 1),mode=hparams1.aug_mode)
-                ds1 =  _torch.cat(dataloader.dataset.tensors, 1) if aug_method1 is None else aug_method1(_torch.cat(dataloader.dataset.tensors, 1),mode=hparams1.aug_mode)
+            # for epoch in range(nepochs):
+            #     augment_met = [augmentation.GaussianNoise(), augmentation.NumericalChange(),augmentation.WordDrop(), augmentation.FragmentTransfer(),augmentation.Reverse()]
+            #     aug_method0 = None if hparams.aug_mode[0] == None else augment_met[hparams.aug_mode[0]]
+            #     aug_method1 = None if hparams.aug_mode[1] == None else augment_met[hparams.aug_mode[1]]
+            #     ds0 =  _torch.cat(dataloader.dataset.tensors, 1) if aug_method0 is None else aug_method0(_torch.cat(dataloader.dataset.tensors, 1),mode=hparams.aug_mode)
+            #     ds1 =  _torch.cat(dataloader.dataset.tensors, 1) if aug_method1 is None else aug_method1(_torch.cat(dataloader.dataset.tensors, 1),mode=hparams.aug_mode)
                 
-                if epoch % 10 == 0:
-                    print('d', _torch.sum(_torch.pow(_torch.sub(ds0,ds1), 2)), file=logfile, end='\n')
-                dataloader = _DataLoader(dataset=_TensorDataset(ds0.narrow(1, 0, self.nsamples), ds0.narrow(1, self.nsamples, self.ntnf), ds1.narrow(1, 0, self.nsamples), ds1.narrow(1, self.nsamples, self.ntnf)),
-                                batch_size=hparams1.batch_size, 
-                                shuffle=True, 
-                                num_workers=0, pin_memory=False,
-                                # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams1.train_size))),batch_size=hparams1.batch_size,drop_last=True),
-                                drop_last=False)
-                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, hparams1, awl)
+            #     if epoch % 10 == 0:
+            #         print('d', _torch.sum(_torch.pow(_torch.sub(ds0,ds1), 2)), file=logfile, end='\n')
+            #     dataloader = _DataLoader(dataset=_TensorDataset(ds0.narrow(1, 0, self.nsamples), ds0.narrow(1, self.nsamples, self.ntnf), ds1.narrow(1, 0, self.nsamples), ds1.narrow(1, self.nsamples, self.ntnf)),
+            #                     batch_size=hparams.batch_size, 
+            #                     shuffle=True, 
+            #                     num_workers=0, pin_memory=False,
+            #                     # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams.train_size))),batch_size=hparams.batch_size,drop_last=True),
+            #                     drop_last=False)
+            for epoch in range(nepochs):
+                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
         # vamb
         else:
-            from argparse import Namespace
             optimizer = _Adam(self.parameters(), lr=lrate)
             for epoch in range(nepochs):
                 dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())

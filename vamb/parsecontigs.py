@@ -8,7 +8,9 @@ Usage:
 import sys as _sys
 import os as _os
 import numpy as _np
+from itertools import product
 import vamb.vambtools as _vambtools
+import vamb.mimics as mimics
 
 # This kernel is created in src/create_kernel.py. See that file for explanation
 _KERNEL = _vambtools.read_npz(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
@@ -73,3 +75,85 @@ def read_contigs(filehandle, minlength=100):
     lengths_arr = lengths.take()
 
     return tnfs_arr, contignames, lengths_arr
+
+def read_contigs_augmentation(filehandle, minlength=100):
+    """Parses a FASTA file open in binary reading mode.
+
+    Input:
+        filehandle: Filehandle open in binary mode of a FASTA file
+        minlength: Ignore any references shorter than N bases [100]
+
+    Outputs:
+        tnfs: An (n_FASTA_entries x 103) matrix of tetranucleotide freq.
+        contignames: A list of contig headers
+        lengths: A Numpy array of contig lengths
+    """
+
+    if minlength < 4:
+        raise ValueError('Minlength must be at least 4, not {}'.format(minlength))
+
+    k = 4
+    # show the encoding rules
+    kmer_dict = {}
+    idx = 0
+    for k_mer in product('ACGT', repeat=k):
+        kmer = ''.join(k_mer)
+        kmer_dict[kmer] = idx
+        idx += 1
+
+    norm = _vambtools.PushArray(_np.float32)
+    gaussian = _vambtools.PushArray(_np.float32)
+    trans = _vambtools.PushArray(_np.float32)
+    traver = _vambtools.PushArray(_np.float32)
+    mutated = _vambtools.PushArray(_np.float32)
+
+    lengths = _vambtools.PushArray(_np.int)
+    contignames = list()
+
+    entries = _vambtools.byte_iterfasta(filehandle)
+
+    for entry in entries:
+        if len(entry) < minlength:
+            continue
+        
+        t = entry.kmercounts(k)
+        t_norm = t / _np.sum(t)
+        t_central = t_norm - 1/(4**k)
+        norm.extend(t_central)
+
+        t_gaussian = mimics.add_noise(t_central)
+        gaussian.extend(t_gaussian)
+
+        indices, mutations = mimics.transition(entry.sequence, 1 - 0.021)
+        t_trans = mimics.mutate_kmers(entry.sequence, kmer_dict, t, k, indices, mutations)
+        t_trans = t_trans / _np.sum(t_trans)
+        trans.extend(t_trans)
+
+        indices, mutations = mimics.transversion(entry.sequence, 1 - 0.0105)
+        t_traver = mimics.mutate_kmers(entry.sequence, kmer_dict, t, k, indices, mutations)
+        t_traver = t_traver / _np.sum(t_traver)
+        traver.extend(t_traver)
+
+        indices, mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007)
+        t_mutated = mimics.mutate_kmers(entry.sequence, kmer_dict, t, k, indices, mutations)
+        t_mutated = t_mutated / _np.sum(t_mutated)
+        mutated.extend(t_mutated)
+
+        lengths.append(len(entry))
+        contignames.append(entry.header)
+
+    # Don't use reshape since it creates a new array object with shared memory
+    norm_arr = norm.take()
+    norm_arr.shape = (len(norm_arr)//(4**k), 4**k)
+    gaussian_arr = gaussian.take()
+    gaussian_arr.shape = (len(gaussian_arr)//(4**k), 4**k)
+    trans_arr = trans.take()
+    trans_arr.shape = (len(trans_arr)//(4**k), 4**k)
+    traver_arr = traver.take()
+    traver_arr.shape = (len(traver_arr)//(4**k), 4**k)
+    mutated_arr = mutated.take()
+    mutated_arr.shape = (len(mutated_arr)//(4**k), 4**k)
+
+    lengths_arr = lengths.take()
+
+    return norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr, contignames, lengths_arr
