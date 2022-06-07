@@ -38,36 +38,29 @@ def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength
     log('Minimum sequence length: {}'.format(mincontiglength), logfile, 1)
     # If no path to FASTA is given, we load TNF from .npz files
     if fastapath is None:
-        log('Loading TNF from npz array {}'.format(tnfpath), logfile, 1)
-        tnfs = vamb.vambtools.read_npz(tnfpath)
-        log('Loading contignames from npz array {}'.format(namespath), logfile, 1)
-        contignames = vamb.vambtools.read_npz(namespath)
-        log('Loading contiglengths from npz array {}'.format(lengthspath), logfile, 1)
-        contiglengths = vamb.vambtools.read_npz(lengthspath)
-
-        if not tnfs.dtype == np.float32:
-            raise ValueError('TNFs .npz array must be of float32 dtype')
-
-        if not np.issubdtype(contiglengths.dtype, np.integer):
-            raise ValueError('contig lengths .npz array must be of an integer dtype')
-
-        if not (len(tnfs) == len(contignames) == len(contiglengths)):
-            raise ValueError('Not all of TNFs, names and lengths are same length')
-
-        # Discard any sequence with a length below mincontiglength
-        mask = contiglengths >= mincontiglength
-        tnfs = tnfs[mask]
-        contignames = list(contignames[mask])
-        contiglengths = contiglengths[mask]
+        raise FileNotFoundError(f'fasta files are required to count kmer and simulate mutation')
 
     # Else parse FASTA files
     else:
         log('Loading data from FASTA file {}'.format(fastapath), logfile, 1)
-        with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
-            ret = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength)
+        if False:
+            with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
+                ret = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength)
+                tnffile.close()
 
-        tnfs, contignames, contiglengths = ret
-        vamb.vambtools.write_npz(os.path.join(outdir, 'tnf.npz'), tnfs)
+            tnfs, contignames, contiglengths = ret
+        else:
+            with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
+                ret = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength)
+                tnffile.close()
+
+            norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr, contignames, contiglengths = ret
+
+        if False:
+            vamb.vambtools.write_npz(os.path.join(outdir, 'tnf.npz'), tnfs)
+        else:
+            np.savez(os.path.join(outdir, 'tnf.npz'), norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr)
+        
         vamb.vambtools.write_npz(os.path.join(outdir, 'lengths.npz'), contiglengths)
 
     elapsed = round(time.time() - begintime, 2)
@@ -78,7 +71,7 @@ def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength
     log('Kept {} bases in {} sequences'.format(nbases, ncontigs), logfile, 1)
     log('Processed TNF in {} seconds'.format(elapsed), logfile, 1)
 
-    return tnfs, contignames, contiglengths
+    return ret
 
 def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, ncontigs,
               minalignscore, minid, subprocesses, logfile):
@@ -135,8 +128,26 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
     begintime = time.time()
     log('\nCreating and training VAE', logfile)
     nsamples = rpkms.shape[1]
-    dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
-                                                   destroy=True, cuda=cuda)
+
+    if len(tnfs) == 5:
+        # basic config for contrastive learning
+        aug_all_method = ['NoAugmentation','GaussianNoise','Transition','Transversion','Mutation']
+        hparams = Namespace(
+            batch_size=16384,
+            validation_size=4096,
+            visualize_size=25600,
+            l2_norm=True, # if False, temperature = 1e+x; if True, temperature < 1
+            temperature=2,
+            aug_mode=(0,0)
+        )
+        dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
+                                                   destroy=True, cuda=cuda, hparams=hparams)
+    elif len(tnfs) == 1:
+        dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
+                                                   destroy=True, cuda=cuda, contrastive=False)
+    else:
+        raise ValueError('TNF must contain 1 or 5 Numpy arrays')
+
     log('Created dataloader and mask', logfile, 1)
     vamb.vambtools.write_npz(os.path.join(outdir, 'mask.npz'), mask)
     n_discarded = len(mask) - mask.sum()
@@ -144,47 +155,15 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
     log('Number of sequences remaining: {}'.format(len(mask) - n_discarded), logfile, 1)
     print('', file=logfile)
 
-    # basic config
-    aug_all_method = ['GaussianNoise','NumericalChange','WordDrop','FragmentTransfer','Reverse','CropAndResize']
-    hparams1 = Namespace(
-        lr=1e-1,
-        epochs=nepochs,
-        patience=50,
-        num_nodes=1,
-        gpus=0 if cuda else 1,
-        batch_size=16384,
-        train_size=len(mask) - n_discarded,
-        validation_size=4096,
-        visualize_size=25600,
-        hidden_mlp=32,
-        input_size=113,
-        l2_norm=True, # if False, temperature = 1e+x; if True, temperature < 1
-        temperature=0.1,
-        feat_dim=32,
-        device=cuda,
-        aug_mode=(0,0)
-    )
-
     # clmb
     if True:
-        vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=hparams1.hidden_mlp,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
-        modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
-        if False:
-            from torch.utils.data import DataLoader as _DataLoader
-            from torch.utils.data.dataset import TensorDataset as _TensorDataset
-            tensor_data_depth, tensor_data_tnf = dataloader.dataset.tensors[0], dataloader.dataset.tensors[1]
-            #print(tensor_data_tnf.shape)
-            random_select = random.sample(range(0,len(mask),1),k=round(0.7*len(mask)))
-            traindataset_subset = _TensorDataset(torch.index_select(tensor_data_depth, 0, torch.tensor(random_select)), torch.index_select(tensor_data_tnf, 0, torch.tensor(random_select)))
-            #traindataset_subset, remain_dataset = _random_split(dataloader.dataset, [train_num, len(mask)-train_num])
-            dataloader_subset = _DataLoader(dataset=traindataset_subset, batch_size=hparams1.batch_size, drop_last=False, shuffle=False, num_workers=0, pin_memory=cuda)
-            vae.trainmodel(dataloader_subset, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams1=hparams1)
-        else:
-            vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams1=hparams1)
+        vae = vamb.encode.VAE(ntnf=int(tnfs[0].shape[1]), nsamples=nsamples, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
+        modelpath = os.path.join(outdir.replace('results','data'), f"{aug_all_method[hparams.aug_mode[0]]+'_'+aug_all_method[hparams.aug_mode[1]]}.pt")
+        vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams)
     else:
-    	modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams1.aug_mode[0]]+' '+aug_all_method[hparams1.aug_mode[1]]+' '+str(hparams1.hidden_mlp)}.pt")
-    	vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
-    	vae.to(('cuda' if cuda else 'cpu'))
+        modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams.aug_mode[0]]+' '+aug_all_method[hparams.aug_mode[1]]+' '+str(hparams.hidden_mlp)}.pt")
+        vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
+        vae.to(('cuda' if cuda else 'cpu'))
 
     latent = vae.encode(dataloader)
     vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
@@ -196,7 +175,7 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
     # visualize
     # from . import visualize
     # visual_model = {'simclr':vae} # 'vae':vae_model
-    # visualize.visualize(hparams1,dataloader,visual_model,method='umap',**{'select':18})
+    # visualize.visualize(hparams,dataloader,visual_model,method='umap',**{'select':18})
 
     elapsed = round(time.time() - begintime, 2)
     log('Trained VAE and encoded in {} seconds'.format(elapsed), logfile, 1)
@@ -222,36 +201,6 @@ def cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclus
 #    it = []
 #    def get_all_index(lst: list=[], item=None):
 #        return [index for (index,value) in enumerate(lst) if value == item]
-    '''
-    # source: https://gist.github.com/gdbassett/528d816d035f2deaaca1
-    # X should be a numpy matrix, very likely sparse matrix: http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.sparse.csr_matrix.html#scipy.sparse.csr_matrix
-    # T1 > T2 for overlapping clusters
-    # T1 = Distance to centroid point to not include in other clusters
-    # T2 = Distance to centroid point to include in cluster
-    # T1 > T2 for overlapping clusters
-    # T1 < T2 will have points which reside in no clusters
-    # T1 == T2 will cause all points to reside in mutually exclusive clusters
-    # Distance metric can be any from here: http://scikit-learn.org/stable/modules/generated/sklearn.metrics.pairwise.pairwise_distances.html
-    # filemap may be a list of point names in their order in X. If included, row numbers from X will be replaced with names from filemap. 
-    '''
-#    def canopy(X, T1, T2, distance_metric='euclidean', filemap=None):
-#        X = csr_matrix(X)
-#        canopies = dict()
-#        X1_dist = pairwise_distances(X, metric=distance_metric)
-#        canopy_points = set(range(X.shape[0]))
-#        while canopy_points:
-#            point = canopy_points.pop()
-#            i = len(canopies)
-#            canopies[i] = {"c":point, "points": list(np.where(X1_dist[point] < T2)[0])}
-#            canopy_points = canopy_points.difference(set(np.where(X1_dist[point] < T1)[0]))
-#        if filemap:
-#            for canopy_id in canopies.keys():
-#                canopy = canopies.pop(canopy_id)
-#                canopy2 = {"c":filemap[canopy['c']], "points":list()}
-#                for point in canopy['points']:
-#                    canopy2["points"].append(filemap[point])
-#                canopies[canopy_id] = canopy2
-#        return canopies
 
 # dbscan
     # gregarious,outlier = range(len(latent)),[]
@@ -271,83 +220,6 @@ def cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclus
     # for o in outlier:
     #     medoid = contignames[o]
     #     points = {contignames[i] for i in [o]}
-    #     it.append((medoid, points))
-
-# dbscan + kmeans 1
-    # # exclude the outlier using DBSCAN
-    # gregarious,outlier = range(len(latent)),[]
-    # dbscan_clustering = DBSCAN(eps=0.16 * math.log2(int(latent.shape[1])), min_samples=2)
-    # dbscan_labels = dbscan_clustering.fit_predict(latent)
-    # all_value_dbscan = set(dbscan_labels)
-    # outlier = get_all_index(dbscan_labels, -1)
-    # print(len(all_value_dbscan),len(outlier))
-
-    # gregarious = sorted(list(set(range(len(latent))).difference(set(outlier))))
-    # gregarious_latent = latent[np.array(gregarious)]
-    # print(len(gregarious))
-
-    # # cluster the gregarious data using kmeans
-    # n_clusters=len(all_value_dbscan)-1
-    # kmeans_clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, batch_size=4096, max_iter=25, init_size=20000 if n_clusters < 20000 else n_clusters, reassignment_ratio=0.2)
-    # kmeans_labels = kmeans_clustering.fit_predict(gregarious_latent)
-    # all_value_kmeans = set(kmeans_labels)
-
-    # for v in all_value_kmeans:
-    #     v_cluster = get_all_index(kmeans_labels, v)
-    #     medoid = contignames[gregarious[v_cluster[0]]]
-    #     points = {contignames[gregarious[i]] for i in v_cluster}
-    #     it.append((medoid, points))
-
-    # for o in outlier:
-    #     medoid = contignames[o]
-    #     points = {contignames[i] for i in [o]}
-    #     it.append((medoid, points))
-
-# dbscan + kmeans 2
-    # # exclude the outlier using DBSCAN
-    # gregarious,outlier = range(len(latent)),[]
-    # dbscan_clustering = DBSCAN(eps=15, min_samples=2)
-    # dbscan_labels = dbscan_clustering.fit_predict(latent)
-    # all_value_dbscan = set(dbscan_labels)
-    # outlier = get_all_index(dbscan_labels, -1)
-    # print(len(all_value_dbscan),len(outlier))
-
-    # gregarious = range(len(latent))
-    # gregarious_latent = latent[np.array(gregarious)]
-
-    # # cluster using kmeans
-    # n_clusters=len(all_value_dbscan) - 1 + len(outlier)
-    # kmeans_clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, batch_size=4096, max_iter=25, init_size=20000 if n_clusters < 20000 else n_clusters, reassignment_ratio=0.2)
-    # kmeans_labels = kmeans_clustering.fit_predict(gregarious_latent)
-    # all_value_kmeans = set(kmeans_labels)
-
-    # for v in all_value_kmeans:
-    #     v_cluster = get_all_index(kmeans_labels, v)
-    #     medoid = contignames[gregarious[v_cluster[0]]]
-    #     points = {contignames[gregarious[i]] for i in v_cluster}
-    #     it.append((medoid, points))
-
-# canopy + kmeans
-    # gregarious,outlier = range(len(latent)),[]
-
-    # gregarious = sorted(list(set(range(len(latent))).difference(set(outlier))))
-    # gregarious_latent = latent[np.array(gregarious)]
-    # # print(len(gregarious))
-
-    # # use canopy algorithm to estimate k for k-means
-    # canopy_clustering = canopy(gregarious_latent, 2, 3)
-    # print(len(canopy_clustering))
-
-    # # cluster the gregarious data using kmeans
-    # n_clusters=len(canopy_clustering)
-    # kmeans_clustering = MiniBatchKMeans(n_clusters=n_clusters, random_state=0, batch_size=4096, max_iter=25, init_size=20000 if n_clusters < 20000 else n_clusters, reassignment_ratio=0.2)
-    # kmeans_labels = kmeans_clustering.fit_predict(gregarious_latent)
-    # all_value_kmeans = set(kmeans_labels)
-
-    # for v in all_value_kmeans:
-    #     v_cluster = get_all_index(kmeans_labels, v)
-    #     medoid = contignames[gregarious[v_cluster[0]]]
-    #     points = {contignames[gregarious[i]] for i in v_cluster}
     #     it.append((medoid, points))
 
 # medoid
@@ -417,16 +289,24 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, bampaths, rpkmpath, 
 
     # Get TNFs, save as npz
     if False:
-        tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, tnfpath, namespath,
+        ret = calc_tnf(outdir, fastapath, tnfpath, namespath,
                                                 lengthspath, mincontiglength, logfile)
+        if False:
+            norm_arr, contignames, contiglengths = ret
+            vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'tnfs.npz'), norm_arr)
+            tnfs = (norm_arr)
+        else:
+            norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr, contignames, contiglengths = ret
+            vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'tnfs.npz'), norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr)
+            tnfs = (norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr)
         vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'contiglengths.npz'), contiglengths)
-        vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'tnfs.npz'), tnfs)
         with open(os.path.join(outdir.replace('results','data'), 'contignames.txt'),'w') as f:
             f.write('\n'.join(contignames))
             f.close()
     else:
         contiglengths = vamb.vambtools.read_npz(os.path.join(outdir.replace('results','data'), 'contiglengths.npz'))
-        tnfs = vamb.vambtools.read_npz(os.path.join(outdir.replace('results','data'), 'tnfs.npz'))
+        tnfs_archive = np.load(os.path.join(outdir.replace('results','data'), 'tnfs.npz'))
+        tnfs = [tnfs_archive['arr_'+str(i)] for i in range(len(tnfs_archive))]
         with open(os.path.join(outdir.replace('results','data'), 'contignames.txt'),'r') as f:
             raw_contignames = f.readlines()
             contignames = [rawstr.replace('\n','') for rawstr in raw_contignames]
@@ -436,7 +316,7 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, bampaths, rpkmpath, 
     refhash = None if norefcheck else vamb.vambtools._hash_refnames(contignames)
     if rpkmpath is None:
         rpkms = calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash,
-                      len(tnfs), minalignscore, minid, subprocesses, logfile)
+                      len(contignames), minalignscore, minid, subprocesses, logfile)
     else:
         if rpkmpath == r'padding$padding':
             rpkms = np.ones((len(contignames),1),dtype=np.float32)
@@ -446,7 +326,7 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, bampaths, rpkmpath, 
     print(2)
     # Train, save model
     mask, latent = trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta,
-                           dropout, cuda, batchsize, nepochs, lrate, batchsteps, logfile)
+                            dropout, cuda, batchsize, nepochs, lrate, batchsteps, logfile)
 
     del tnfs, rpkms
     contignames = [c for c, m in zip(contignames, mask) if m]
