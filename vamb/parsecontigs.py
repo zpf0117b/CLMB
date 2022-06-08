@@ -10,7 +10,7 @@ import os as _os
 import numpy as _np
 from itertools import product
 import vamb.vambtools as _vambtools
-import vamb.mimics as mimics
+from . import mimics
 
 # This kernel is created in src/create_kernel.py. See that file for explanation
 _KERNEL = _vambtools.read_npz(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
@@ -76,7 +76,7 @@ def read_contigs(filehandle, minlength=100):
 
     return tnfs_arr, contignames, lengths_arr
 
-def read_contigs_augmentation(filehandle, minlength=100):
+def read_contigs_augemntation(filehandle, minlength=100, store_dir="./", backup_iteration=100, usecuda=False):
     """Parses a FASTA file open in binary reading mode.
 
     Input:
@@ -118,26 +118,30 @@ def read_contigs_augmentation(filehandle, minlength=100):
         
         t = entry.kmercounts(k)
         t_norm = t / _np.sum(t)
-        t_central = t_norm - 1/(4**k)
-        norm.extend(t_central)
+        _np.add(t_norm, - 1/(2*4**k), out=t_norm)
+        norm.extend(t_norm)
 
-        t_gaussian = mimics.add_noise(t_central)
-        gaussian.extend(t_gaussian)
+        for i in range(backup_iteration):
+            t_gaussian = mimics.add_noise(t_norm)
+            gaussian.extend(t_gaussian)
 
-        indices, mutations = mimics.transition(entry.sequence, 1 - 0.021)
-        t_trans = mimics.mutate_kmers(entry.sequence, kmer_dict, t, k, indices, mutations)
-        t_trans = t_trans / _np.sum(t_trans)
-        trans.extend(t_trans)
+        for i in range(backup_iteration):
+            indices, mutations = mimics.transition(entry.sequence.decode(), 1 - 0.021)
+            t_trans = mimics.mutate_kmers(entry.sequence.decode(), kmer_dict, t, k, indices, mutations)
+            t_trans = t_trans / _np.sum(t_trans)
+            trans.extend(t_trans)
 
-        indices, mutations = mimics.transversion(entry.sequence, 1 - 0.0105)
-        t_traver = mimics.mutate_kmers(entry.sequence, kmer_dict, t, k, indices, mutations)
-        t_traver = t_traver / _np.sum(t_traver)
-        traver.extend(t_traver)
+        for i in range(backup_iteration):
+            indices, mutations = mimics.transversion(entry.sequence.decode(), 1 - 0.0105)
+            t_traver = mimics.mutate_kmers(entry.sequence.decode(), kmer_dict, t, k, indices, mutations)
+            t_traver = t_traver / _np.sum(t_traver)
+            traver.extend(t_traver)
 
-        indices, mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007)
-        t_mutated = mimics.mutate_kmers(entry.sequence, kmer_dict, t, k, indices, mutations)
-        t_mutated = t_mutated / _np.sum(t_mutated)
-        mutated.extend(t_mutated)
+        for i in range(backup_iteration):
+            indices, mutations = mimics.transition_transversion(entry.sequence.decode(), 1 - 0.014, 1 - 0.007)
+            t_mutated = mimics.mutate_kmers(entry.sequence.decode(), kmer_dict, t, k, indices, mutations)
+            t_mutated = t_mutated / _np.sum(t_mutated)
+            mutated.extend(t_mutated)
 
         lengths.append(len(entry))
         contignames.append(entry.header)
@@ -146,14 +150,25 @@ def read_contigs_augmentation(filehandle, minlength=100):
     norm_arr = norm.take()
     norm_arr.shape = (len(norm_arr)//(4**k), 4**k)
     gaussian_arr = gaussian.take()
-    gaussian_arr.shape = (len(gaussian_arr)//(4**k), 4**k)
+    gaussian_arr.shape = (-1, backup_iteration, 4**k)
     trans_arr = trans.take()
-    trans_arr.shape = (len(trans_arr)//(4**k), 4**k)
+    trans_arr.shape = (-1, backup_iteration, 4**k)
     traver_arr = traver.take()
-    traver_arr.shape = (len(traver_arr)//(4**k), 4**k)
+    traver_arr.shape = (-1, backup_iteration, 4**k)
     mutated_arr = mutated.take()
-    mutated_arr.shape = (len(mutated_arr)//(4**k), 4**k)
+    mutated_arr.shape = (-1, backup_iteration, 4**k)
+
+    for i in range(backup_iteration):
+        gaussian_save = gaussian_arr[:,i,:]
+        gaussian_save.shape = (-1, 4**k)
+        trans_save = trans_arr[:,i,:]
+        trans_save.shape = (-1, 4**k)
+        traver_save = traver_arr[:,i,:]
+        traver_save.shape = (-1, 4**k)
+        mutated_save = mutated_arr[:,i,:]
+        mutated_save.shape = (-1, 4**k)
+        _np.savez(f"{store_dir}/backup_arr_iter{i}.npz", gaussian_save, trans_save, traver_save, mutated_save)
 
     lengths_arr = lengths.take()
 
-    return norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr, contignames, lengths_arr
+    return norm_arr, contignames, lengths_arr

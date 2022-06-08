@@ -32,36 +32,56 @@ def log(string, logfile, indent=0):
     print(('\t' * indent) + string, file=logfile)
     logfile.flush()
 
-def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength, logfile):
+def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength, logfile, nepochs):
     begintime = time.time()
     log('\nLoading TNF', logfile, 0)
     log('Minimum sequence length: {}'.format(mincontiglength), logfile, 1)
     # If no path to FASTA is given, we load TNF from .npz files
     if fastapath is None:
-        raise FileNotFoundError(f'fasta files are required to count kmer and simulate mutation')
+        log('Loading TNF from npz array {}'.format(tnfpath), logfile, 1)
+        tnfs = vamb.vambtools.read_npz(tnfpath)
+        log('Loading contignames from npz array {}'.format(namespath), logfile, 1)
+        contignames = vamb.vambtools.read_npz(namespath)
+        log('Loading contiglengths from text {}'.format(lengthspath), logfile, 1)
+        with open(namespath,'r') as f:
+            raw_contignames = f.readlines()
+            contignames = [rawstr.replace('\n','') for rawstr in raw_contignames]
+            f.close()
+
+        if not tnfs.dtype == np.float32:
+            raise ValueError('TNFs .npz array must be of float32 dtype')
+
+        if not np.issubdtype(contiglengths.dtype, np.integer):
+            raise ValueError('contig lengths .npz array must be of an integer dtype')
+
+        if not (len(tnfs) == len(contignames) == len(contiglengths)):
+            raise ValueError('Not all of TNFs, names and lengths are same length')
+
+        # Discard any sequence with a length below mincontiglength
+        mask = contiglengths >= mincontiglength
+        tnfs = tnfs[mask]
+        contignames = list(np.array(contignames)[mask])
+        contiglengths = contiglengths[mask]
 
     # Else parse FASTA files
     else:
         log('Loading data from FASTA file {}'.format(fastapath), logfile, 1)
         if False:
             with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
-                ret = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength)
+                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength)
                 tnffile.close()
-
-            tnfs, contignames, contiglengths = ret
         else:
+            augmentation_store_dir = os.path.join(outdir, 'augmentation')
+            os.system(f'mkdir -p {augmentation_store_dir}')
             with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
-                ret = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength)
+                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, store_dir=augmentation_store_dir, backup_iteration=nepochs)
                 tnffile.close()
 
-            norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr, contignames, contiglengths = ret
-
-        if False:
-            vamb.vambtools.write_npz(os.path.join(outdir, 'tnf.npz'), tnfs)
-        else:
-            np.savez(os.path.join(outdir, 'tnf.npz'), norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr)
-        
+        vamb.vambtools.write_npz(os.path.join(outdir, 'tnf.npz'), tnfs)
         vamb.vambtools.write_npz(os.path.join(outdir, 'lengths.npz'), contiglengths)
+        with open(os.path.join(outdir.replace('results','data'), 'contignames.txt'),'w') as f:
+            f.write('\n'.join(contignames))
+            f.close()
 
     elapsed = round(time.time() - begintime, 2)
     ncontigs = len(contiglengths)
@@ -71,7 +91,7 @@ def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength
     log('Kept {} bases in {} sequences'.format(nbases, ncontigs), logfile, 1)
     log('Processed TNF in {} seconds'.format(elapsed), logfile, 1)
 
-    return ret
+    return tnfs, contignames, contiglengths, None if False else augmentation_store_dir
 
 def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, ncontigs,
               minalignscore, minid, subprocesses, logfile):
@@ -122,31 +142,25 @@ def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, nco
     return rpkms
 
 from argparse import Namespace
-def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
+def trainvae(outdir, rpkms, tnfs, augmentationpath, nhiddens, nlatent, alpha, beta, dropout, cuda,
             batchsize, nepochs, lrate, batchsteps, logfile):
 
     begintime = time.time()
     log('\nCreating and training VAE', logfile)
     nsamples = rpkms.shape[1]
 
-    if len(tnfs) == 5:
-        # basic config for contrastive learning
-        aug_all_method = ['NoAugmentation','GaussianNoise','Transition','Transversion','Mutation']
-        hparams = Namespace(
-            batch_size=16384,
-            validation_size=4096,
-            visualize_size=25600,
-            l2_norm=True, # if False, temperature = 1e+x; if True, temperature < 1
-            temperature=2,
-            aug_mode=(0,0)
-        )
-        dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
-                                                   destroy=True, cuda=cuda, hparams=hparams)
-    elif len(tnfs) == 1:
-        dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
-                                                   destroy=True, cuda=cuda, contrastive=False)
-    else:
-        raise ValueError('TNF must contain 1 or 5 Numpy arrays')
+    # basic config for contrastive learning
+    aug_all_method = ['NoAugmentation','GaussianNoise','Transition','Transversion','Mutation']
+    hparams = Namespace(
+        batch_size=batchsize,
+        validation_size=4096,
+        visualize_size=25600,
+        l2_norm=True, # if False, temperature = 1e+x; if True, temperature < 1
+        temperature=2,
+        aug_mode=(-1,-1)
+    )
+    dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
+                                                   destroy=True, cuda=cuda)
 
     log('Created dataloader and mask', logfile, 1)
     vamb.vambtools.write_npz(os.path.join(outdir, 'mask.npz'), mask)
@@ -157,9 +171,9 @@ def trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta, dropout, cuda,
 
     # clmb
     if True:
-        vae = vamb.encode.VAE(ntnf=int(tnfs[0].shape[1]), nsamples=nsamples, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
+        vae = vamb.encode.VAE(ntnf=int(tnfs.shape[1]), nsamples=nsamples, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
         modelpath = os.path.join(outdir.replace('results','data'), f"{aug_all_method[hparams.aug_mode[0]]+'_'+aug_all_method[hparams.aug_mode[1]]}.pt")
-        vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams)
+        vae.trainmodel(dataloader, augmentationpath, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams)
     else:
         modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams.aug_mode[0]]+' '+aug_all_method[hparams.aug_mode[1]]+' '+str(hparams.hidden_mlp)}.pt")
         vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
@@ -278,7 +292,7 @@ def write_fasta(outdir, clusterspath, fastapath, contignames, contiglengths, min
     elapsed = round(time.time() - begintime, 2)
     log('Wrote FASTA in {} seconds'.format(elapsed), logfile, 1)
 
-def run(outdir, fastapath, tnfpath, namespath, lengthspath, bampaths, rpkmpath, jgipath,
+def run(outdir, fastapath, tnfpath, namespath, lengthspath, augmentationpath, bampaths, rpkmpath, jgipath,
         mincontiglength, norefcheck, minalignscore, minid, subprocesses, nhiddens, nlatent,
         nepochs, batchsize, cuda, alpha, beta, dropout, lrate, batchsteps, windowsize,
         minsuccesses, minclustersize, separator, maxclusters, minfasta, logfile):
@@ -286,32 +300,17 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, bampaths, rpkmpath, 
     log('Starting Vamb version ' + '.'.join(map(str, vamb.__version__)), logfile)
     log('Date and time is ' + str(datetime.datetime.now()), logfile, 1)
     begintime = time.time()
+    print(f'Start at {time.time()}')
 
     # Get TNFs, save as npz
-    if False:
-        ret = calc_tnf(outdir, fastapath, tnfpath, namespath,
-                                                lengthspath, mincontiglength, logfile)
-        if False:
-            norm_arr, contignames, contiglengths = ret
-            vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'tnfs.npz'), norm_arr)
-            tnfs = (norm_arr)
-        else:
-            norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr, contignames, contiglengths = ret
-            vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'tnfs.npz'), norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr)
-            tnfs = (norm_arr, gaussian_arr, trans_arr, traver_arr, mutated_arr)
-        vamb.vambtools.write_npz(os.path.join(outdir.replace('results','data'), 'contiglengths.npz'), contiglengths)
-        with open(os.path.join(outdir.replace('results','data'), 'contignames.txt'),'w') as f:
-            f.write('\n'.join(contignames))
-            f.close()
-    else:
-        contiglengths = vamb.vambtools.read_npz(os.path.join(outdir.replace('results','data'), 'contiglengths.npz'))
-        tnfs_archive = np.load(os.path.join(outdir.replace('results','data'), 'tnfs.npz'))
-        tnfs = [tnfs_archive['arr_'+str(i)] for i in range(len(tnfs_archive))]
-        with open(os.path.join(outdir.replace('results','data'), 'contignames.txt'),'r') as f:
-            raw_contignames = f.readlines()
-            contignames = [rawstr.replace('\n','') for rawstr in raw_contignames]
-            f.close()
-    print(1)
+    tnfs, contignames, contiglengths, augmentation_store_dir = calc_tnf(outdir, fastapath, tnfpath, namespath,
+                                            lengthspath, mincontiglength, logfile, nepochs)
+    augmentationpath = augmentation_store_dir if augmentation_store_dir is not None else augmentationpath 
+    # Maybe None
+    if not (os.path.exists(augmentationpath) and os.listdir(augmentationpath) >= nepochs * 4):
+        raise FileNotFoundError('Not an existing directory or not an directory with enough files for training' + augmentationpath)
+    print(f'TNFs completed at {time.time()}')
+
     # Parse BAMs, save as npz
     refhash = None if norefcheck else vamb.vambtools._hash_refnames(contignames)
     if rpkmpath is None:
@@ -323,19 +322,21 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, bampaths, rpkmpath, 
         else:
             rpkms_data = np.load(rpkmpath)
             rpkms = rpkms_data[rpkms_data.files[0]]
-    print(2)
+    print(f'RPKM completed at {time.time()}')
+
     # Train, save model
-    mask, latent = trainvae(outdir, rpkms, tnfs, nhiddens, nlatent, alpha, beta,
+    mask, latent = trainvae(outdir, rpkms, tnfs, augmentationpath, nhiddens, nlatent, alpha, beta,
                             dropout, cuda, batchsize, nepochs, lrate, batchsteps, logfile)
 
     del tnfs, rpkms
     contignames = [c for c, m in zip(contignames, mask) if m]
-    print(3)
+    print(f'Deep learning completed at {time.time()}')
+
     # Cluster, save tsv file
     clusterspath = os.path.join(outdir, 'clusters.tsv')
     cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclusters,
             minclustersize, separator, cuda, logfile)
-    print(4)
+    print(f'Clustering completed at {time.time()}')
     del latent
 
     if minfasta is not None:
@@ -374,6 +375,7 @@ def main():
     tnfos.add_argument('--tnfs', metavar='', help='path to .npz of TNF')
     tnfos.add_argument('--names', metavar='', help='path to .npz of names of sequences')
     tnfos.add_argument('--lengths', metavar='', help='path to .npz of seq lengths')
+    tnfos.add_argument('--augmentation', metavar='', help='path to augmentation dir')
 
     # RPKM arguments
     rpkmos = parser.add_argument_group(title='RPKM input (either BAMs, JGI or .npz required)')
@@ -448,8 +450,9 @@ def main():
     # Outdir does not exist
     args.outdir = os.path.abspath(args.outdir)
     if os.path.exists(args.outdir):
-        os.system(f'rm -r {args.outdir}')
+        # os.system(f'rm -r {args.outdir}')
         # raise FileExistsError(args.outdir)
+        print("OUTDIR exists. Please be careful that some files might be rewrited")
 
     # Outdir is in an existing parent dir
     parentdir = os.path.dirname(args.outdir)
@@ -583,6 +586,7 @@ def main():
             args.tnfs,
             args.names,
             args.lengths,
+            args.augmentation,
             args.bamfiles,
             args.rpkm if rpkm_flag else r'padding$padding',
             args.jgi,
