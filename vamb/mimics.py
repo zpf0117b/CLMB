@@ -9,7 +9,8 @@ def add_noise(x_train):
     """
     n_features = x_train.shape[0]
     index = (np.random.random(n_features) < 0.25).astype('float32')
-    noise = np.random.normal(-0.005*np.mean(x_train), 0.005*np.mean(x_train), n_features)
+    mean = np.mean(x_train)
+    noise = np.random.normal(-0.005*mean, 0.005*mean, n_features)
     gaussian_train = x_train + noise * index
     return gaussian_train
 
@@ -39,8 +40,11 @@ def mutate_kmers(seq, k_dict, k_count, k, positions, mutations):
             new_kmer[-j] = new_bp
             new_kmer = ''.join(new_kmer)
 
-            new_count[k_dict[kmer]] -= 1
-            new_count[k_dict[new_kmer]] += 1
+            if 'N' in kmer or 'N' in new_kmer:
+                pass
+            else:
+                new_count[k_dict[kmer]] -= 1
+                new_count[k_dict[new_kmer]] += 1
 
     return new_count
 
