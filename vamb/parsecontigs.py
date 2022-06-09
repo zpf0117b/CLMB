@@ -110,39 +110,44 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
     contignames = list()
 
     entries = _vambtools.byte_iterfasta(filehandle)
+
+    # We do not generate the number due to time cost. We just find the minimum augmentation we need for all iteration (count)
     count = 0
+    while count * count < backup_iteration:
+        count += 1
+
     for entry in entries:
         if len(entry) < minlength:
             continue
-        count += 1
+
         t = entry.kmercounts(k)
         t_norm = t / _np.sum(t)
         _np.add(t_norm, - 1/(2*4**k), out=t_norm)
         norm.extend(t_norm)
 
-        for i in range(backup_iteration):
+        for i in range(count):
             t_gaussian = mimics.add_noise(t_norm)
             gaussian.extend(t_gaussian)
             print(sum(t_gaussian),end=' ')
 
-        mutations = mimics.transition(entry.sequence, 1 - 0.021, backup_iteration)
-        for i in range(backup_iteration):
+        mutations = mimics.transition(entry.sequence, 1 - 0.021, count)
+        for i in range(count):
             _kmercounts(bytearray(mutations[i]), k, counts_kmer)
             t_trans = counts_kmer / _np.sum(counts_kmer)
             _np.add(t_trans, - 1/(2*4**k), out=t_trans)
             trans.extend(t_trans)
             print(sum(t_trans),end=' ')
 
-        mutations = mimics.transversion(entry.sequence, 1 - 0.0105, backup_iteration)
-        for i in range(backup_iteration):
+        mutations = mimics.transversion(entry.sequence, 1 - 0.0105, count)
+        for i in range(count):
             _kmercounts(bytearray(mutations[i]), k, counts_kmer)
             t_traver = counts_kmer / _np.sum(counts_kmer)
             _np.add(t_traver, - 1/(2*4**k), out=t_traver)
             traver.extend(t_traver)
             print(sum(t_traver),end=' ')
 
-        mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007, backup_iteration)
-        for i in range(backup_iteration):
+        mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007, count)
+        for i in range(count):
             _kmercounts(bytearray(mutations[i]), k, counts_kmer)
             t_mutated = counts_kmer / _np.sum(counts_kmer)
             _np.add(t_mutated, - 1/(2*4**k), out=t_mutated)
@@ -151,7 +156,7 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
 
         lengths.append(len(entry))
         contignames.append(entry.header)
-        print(count, time())
+        print(time())
     # Don't use reshape since it creates a new array object with shared memory
     norm_arr = norm.take()
     norm_arr.shape = (len(norm_arr)//(4**k), 4**k)

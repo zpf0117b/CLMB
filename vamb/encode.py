@@ -585,15 +585,20 @@ class VAE(_nn.Module):
             #                     num_workers=0, pin_memory=False,
             #                     # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams.train_size))),batch_size=hparams.batch_size,drop_last=True),
             #                     drop_last=False)
+            count = 0
+            while count * count < nepochs:
+                count += 1
             for epoch in range(nepochs):
                 depthstensor, tnftensor = dataloader.dataset.tensors
-                aug_arr = _np.load(f'{augmentationpath+os.sep}backup_arr_iter{str(epoch)}.npz')
+                aug_archive1, aug_archive2 = _np.load(f'{augmentationpath+os.sep}backup_arr_iter{str(epoch//count)}.npz'), _np.load(f'{augmentationpath+os.sep}backup_arr_iter{str(epoch)%count}.npz')
                 if hparams.aug_mode == (-1, -1):
                     # Sample the augmentation methods without replacement. We use the sample amount to determine the frequency of methods.  
                     sample_list = sample([0,1,1,1,1,1,1,2,2,2,3,3,3,3,3,3,3,3,3], 2)
-                    aug_arr1, aug_arr2 = aug_arr[f'arr_{sample_list[0]}'], aug_arr[f'arr_{sample_list[1]}']
+                    # aug_arr1, aug_arr2 = aug_arr[f'arr_{sample_list[0]}'], aug_arr[f'arr_{sample_list[1]}']
+                    aug_arr1, aug_arr2 = aug_archive1[f'arr_{sample_list[0]}'], aug_archive2[f'arr_{sample_list[1]}']
                 else:
-                    aug_arr1, aug_arr2 = aug_arr[f'arr_{hparams.aug_mode[0]}'], aug_arr[f'arr_{hparams.aug_mode[1]}']
+                    # aug_arr1, aug_arr2 = aug_arr[f'arr_{hparams.aug_mode[0]}'], aug_arr[f'arr_{hparams.aug_mode[1]}']
+                    aug_arr1, aug_arr2 = aug_archive1[f'arr_{hparams.aug_mode[0]}'], aug_archive2[f'arr_{hparams.aug_mode[1]}']
                 _vambtools.zscore(aug_arr1, axis=0, inplace=True)
                 _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                 aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
