@@ -120,22 +120,25 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
             t_gaussian = mimics.add_noise(t_norm)
             gaussian.extend(t_gaussian)
 
+        mutations = mimics.transition(entry.sequence, 1 - 0.021, backup_iteration)
         for i in range(backup_iteration):
-            mutations = mimics.transition(entry.sequence, 1 - 0.021)
-            t_trans = _vambtools.byte_seq_kmercounts(mutations, k)
+            t_trans = _vambtools.byte_seq_kmercounts(bytearray(mutations[i]), k)
             t_trans = t_trans / _np.sum(t_trans)
+            _np.add(t_trans, - 1/(2*4**k), out=t_trans)
             trans.extend(t_trans)
 
+        mutations = mimics.transversion(entry.sequence, 1 - 0.0105, backup_iteration)
         for i in range(backup_iteration):
-            mutations = mimics.transversion(entry.sequence.decode(), 1 - 0.0105)
-            t_traver = _vambtools.byte_seq_kmercounts(mutations, k)
+            t_traver = _vambtools.byte_seq_kmercounts(bytearray(mutations[i]), k)
             t_traver = t_traver / _np.sum(t_traver)
+            _np.add(t_traver, - 1/(2*4**k), out=t_traver)
             traver.extend(t_traver)
 
+        mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007, backup_iteration)
         for i in range(backup_iteration):
-            mutations = mimics.transition_transversion(entry.sequence.decode(), 1 - 0.014, 1 - 0.007)
-            t_mutated = _vambtools.byte_seq_kmercounts(mutations, k)
+            t_mutated = _vambtools.byte_seq_kmercounts(bytearray(mutations[i]), k)
             t_mutated = t_mutated / _np.sum(t_mutated)
+            _np.add(t_mutated, - 1/(2*4**k), out=t_mutated)
             mutated.extend(t_mutated)
 
         lengths.append(len(entry))

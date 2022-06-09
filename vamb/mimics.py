@@ -49,7 +49,7 @@ def mutate_kmers(seq, k_dict, k_count, k, positions, mutations):
     return new_count
 
 
-def transition(seq, threshold):
+def transition(seq, threshold, iter_num=100):
     """
     Mutate Genomic sequence using transitions only.
     :param seq: Original Genomic Sequence.
@@ -67,16 +67,21 @@ def transition(seq, threshold):
             return 67
         elif nucleotide == 67:
             return 84
+        else:
+            return 78
 
-    x = np.random.random(len(seq))
-    index = np.where(x > threshold)[0]
-    seq_array = np.array(seq)
+    x = np.random.random((iter_num, len(seq)))
+    index = np.where(x > threshold)
+    """
+    Suppose that index in not empty array. I have not find a method to check this.
+    """
+    seq_array = np.array([seq]*iter_num)
     transition_func = np.frompyfunc(base_transition, 1, 1)
     seq_array[index] = transition_func(seq_array[index])
-    return bytearray(seq_array)
+    return seq_array
 
 
-def transversion(seq, threshold):
+def transversion(seq, threshold, iter_num=100):
     """
     Mutate Genomic sequence using transversions only.
     :param seq: Original Genomic Sequence.
@@ -98,17 +103,22 @@ def transversion(seq, threshold):
                 return 65
             else:
                 return 71
+        else:
+            return 78
 
-    x = np.random.random(len(seq))
-    index = np.where(x > threshold)[0]
-    seq_array = np.array(seq)
+    x = np.random.random((iter_num, len(seq)))
+    index = np.where(x > threshold)
+    """
+    Suppose that index in not empty array. I have not find a method to check this.
+    """
+    seq_array = np.array([seq]*iter_num)
     transversion_func = np.frompyfunc(base_transversion, 1, 1)
     seq_array[index] = transversion_func(seq_array[index])
-    return bytearray(seq_array)
+    return seq_array
 
 
 
-def transition_transversion(seq, threshold_1, threshold_2):
+def transition_transversion(seq, threshold_1, threshold_2, iter_num=100):
     """
     Mutate Genomic sequence using transitions and transversions
     :param seq: Original Sequence.
@@ -118,4 +128,4 @@ def transition_transversion(seq, threshold_1, threshold_2):
     """
     # First transitions Then transversions.
 
-    return transversion(transition(seq, threshold_1), threshold_2)
+    return transversion(transition(seq, threshold_1, iter_num), threshold_2, iter_num)
