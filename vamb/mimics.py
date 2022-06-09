@@ -48,6 +48,17 @@ def mutate_kmers(seq, k_dict, k_count, k, positions, mutations):
 
     return new_count
 
+def base_transition(nucleotide):
+    if nucleotide == 65:
+        return 71
+    elif nucleotide == 71:
+        return 65
+    elif nucleotide == 84:
+        return 67
+    elif nucleotide == 67:
+        return 84
+    else:
+        return 78
 
 def transition(seq, threshold, iter_num=100):
     """
@@ -58,17 +69,6 @@ def transition(seq, threshold, iter_num=100):
     """
     ### >>> list(b'AGCT')
     ### [65, 71, 67, 84]
-    def base_transition(nucleotide):
-        if nucleotide == 65:
-            return 71
-        elif nucleotide == 71:
-            return 65
-        elif nucleotide == 84:
-            return 67
-        elif nucleotide == 67:
-            return 84
-        else:
-            return 78
 
     x = np.random.random((iter_num, len(seq)))
     index = np.where(x > threshold)
@@ -80,6 +80,21 @@ def transition(seq, threshold, iter_num=100):
     seq_array[index] = transition_func(seq_array[index])
     return seq_array
 
+def base_transversion(nucleotide):
+    if nucleotide == 65 or nucleotide == 71:
+        random_number = np.random.uniform()
+        if random_number > 0.5:
+            return 84
+        else:
+            return 67
+    elif nucleotide == 84 or nucleotide == 67:
+        random_number = np.random.uniform()
+        if random_number > 0.5:
+            return 65
+        else:
+            return 71
+    else:
+        return 78
 
 def transversion(seq, threshold, iter_num=100):
     """
@@ -90,21 +105,6 @@ def transversion(seq, threshold, iter_num=100):
     """
     ### >>> list(b'AGCT')
     ### [65, 71, 67, 84]
-    def base_transversion(nucleotide):
-        if nucleotide == 65 or nucleotide == 71:
-            random_number = np.random.uniform()
-            if random_number > 0.5:
-                return 84
-            else:
-                return 67
-        elif nucleotide == 84 or nucleotide == 67:
-            random_number = np.random.uniform()
-            if random_number > 0.5:
-                return 65
-            else:
-                return 71
-        else:
-            return 78
 
     x = np.random.random((iter_num, len(seq)))
     index = np.where(x > threshold)
@@ -116,8 +116,6 @@ def transversion(seq, threshold, iter_num=100):
     seq_array[index] = transversion_func(seq_array[index])
     return seq_array
 
-
-
 def transition_transversion(seq, threshold_1, threshold_2, iter_num=100):
     """
     Mutate Genomic sequence using transitions and transversions
@@ -126,6 +124,21 @@ def transition_transversion(seq, threshold_1, threshold_2, iter_num=100):
     :param threshold_2: Probability of NO transversion.
     :return:
     """
-    # First transitions Then transversions.
+    # First transitions Then transversions. Do not call the funcs transition and transversion to save time
+    x1 = np.random.random((iter_num, len(seq)))
+    index = np.where(x1 > threshold_1)
+    """
+    Suppose that index in not empty array. I have not find a method to check this.
+    """
+    seq_array = np.array([seq]*iter_num)
+    transition_func = np.frompyfunc(base_transition, 1, 1)
+    seq_array[index] = transition_func(seq_array[index])
 
-    return transversion(transition(seq, threshold_1, iter_num), threshold_2, iter_num)
+    x2 = np.random.random((iter_num, len(seq)))
+    index = np.where(x2 > threshold_2)
+    """
+    Suppose that index in not empty array. I have not find a method to check this.
+    """
+    transversion_func = np.frompyfunc(base_transversion, 1, 1)
+    seq_array[index] = transversion_func(seq_array[index])
+    return seq_array

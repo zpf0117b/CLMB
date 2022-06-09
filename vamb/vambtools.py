@@ -239,15 +239,6 @@ class FastaEntry:
         _kmercounts(self.sequence, k, counts)
         return counts
 
-# kmer count for sequences in bytearray formats
-def byte_seq_kmercounts(seq, k):
-    if k < 1 or k > 10:
-        raise ValueError('k must be between 1 and 10 inclusive')
-
-    counts = _np.zeros(1 << (2*k), dtype=_np.int32)
-    _kmercounts(seq, k, counts)
-    return counts
-
 def byte_iterfasta(filehandle, comment=b'#'):
     """Yields FastaEntries from a binary opened fasta file.
 

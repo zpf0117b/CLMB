@@ -10,7 +10,10 @@ import os as _os
 import numpy as _np
 from itertools import product
 import vamb.vambtools as _vambtools
+from vamb._vambtools import _kmercounts
 from . import mimics
+# for debug
+from time import time
 
 # This kernel is created in src/create_kernel.py. See that file for explanation
 _KERNEL = _vambtools.read_npz(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
@@ -101,16 +104,17 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
     trans = _vambtools.PushArray(_np.float32)
     traver = _vambtools.PushArray(_np.float32)
     mutated = _vambtools.PushArray(_np.float32)
+    counts_kmer = _np.zeros(1 << (2*k), dtype=_np.int32)
 
     lengths = _vambtools.PushArray(_np.int)
     contignames = list()
 
     entries = _vambtools.byte_iterfasta(filehandle)
-
+    count = 0
     for entry in entries:
         if len(entry) < minlength:
             continue
-        
+        count += 1
         t = entry.kmercounts(k)
         t_norm = t / _np.sum(t)
         _np.add(t_norm, - 1/(2*4**k), out=t_norm)
@@ -119,31 +123,35 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
         for i in range(backup_iteration):
             t_gaussian = mimics.add_noise(t_norm)
             gaussian.extend(t_gaussian)
+            print(sum(t_gaussian),end=' ')
 
         mutations = mimics.transition(entry.sequence, 1 - 0.021, backup_iteration)
         for i in range(backup_iteration):
-            t_trans = _vambtools.byte_seq_kmercounts(bytearray(mutations[i]), k)
-            t_trans = t_trans / _np.sum(t_trans)
+            _kmercounts(bytearray(mutations[i]), k, counts_kmer)
+            t_trans = counts_kmer / _np.sum(counts_kmer)
             _np.add(t_trans, - 1/(2*4**k), out=t_trans)
             trans.extend(t_trans)
+            print(sum(t_trans),end=' ')
 
         mutations = mimics.transversion(entry.sequence, 1 - 0.0105, backup_iteration)
         for i in range(backup_iteration):
-            t_traver = _vambtools.byte_seq_kmercounts(bytearray(mutations[i]), k)
-            t_traver = t_traver / _np.sum(t_traver)
+            _kmercounts(bytearray(mutations[i]), k, counts_kmer)
+            t_traver = counts_kmer / _np.sum(counts_kmer)
             _np.add(t_traver, - 1/(2*4**k), out=t_traver)
             traver.extend(t_traver)
+            print(sum(t_traver),end=' ')
 
         mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007, backup_iteration)
         for i in range(backup_iteration):
-            t_mutated = _vambtools.byte_seq_kmercounts(bytearray(mutations[i]), k)
-            t_mutated = t_mutated / _np.sum(t_mutated)
+            _kmercounts(bytearray(mutations[i]), k, counts_kmer)
+            t_mutated = counts_kmer / _np.sum(counts_kmer)
             _np.add(t_mutated, - 1/(2*4**k), out=t_mutated)
             mutated.extend(t_mutated)
+            print(sum(t_mutated),end=' ')
 
         lengths.append(len(entry))
         contignames.append(entry.header)
-
+        print(count, time())
     # Don't use reshape since it creates a new array object with shared memory
     norm_arr = norm.take()
     norm_arr.shape = (len(norm_arr)//(4**k), 4**k)
