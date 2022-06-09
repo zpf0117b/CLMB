@@ -14,9 +14,9 @@ def add_noise(x_train):
     gaussian_train = x_train + noise * index
     return gaussian_train
 
-
 def mutate_kmers(seq, k_dict, k_count, k, positions, mutations):
     """
+    Deprecated due to low speed
     Compute the k-mer counts based on mutations.
 
     :param seq: Original Sequence to be mutated.
@@ -56,22 +56,24 @@ def transition(seq, threshold):
     :param threshold: probability of NO Transition.
     :return: Mutated Sequence.
     """
+    ### >>> list(b'AGCT')
+    ### [65, 71, 67, 84]
+    def base_transition(nucleotide):
+        if nucleotide == 65:
+            return 71
+        elif nucleotide == 71:
+            return 65
+        elif nucleotide == 84:
+            return 67
+        elif nucleotide == 67:
+            return 84
+
     x = np.random.random(len(seq))
     index = np.where(x > threshold)[0]
-    mutations = []
-
-    for i in index:
-        nucleotide = seq[i]
-        if nucleotide == 'A':
-            mutations.append('G')
-        if nucleotide == 'G':
-            mutations.append('A')
-        if nucleotide == 'T':
-            mutations.append('C')
-        if nucleotide == 'C':
-            mutations.append('T')
-
-    return index, mutations
+    seq_array = np.array(seq)
+    transition_func = np.frompyfunc(base_transition, 1, 1)
+    seq_array[index] = transition_func(seq_array[index])
+    return bytearray(seq_array)
 
 
 def transversion(seq, threshold):
@@ -81,40 +83,29 @@ def transversion(seq, threshold):
     :param threshold: Probability of NO Transversion.
     :return: Mutated Sequence.
     """
+    ### >>> list(b'AGCT')
+    ### [65, 71, 67, 84]
+    def base_transversion(nucleotide):
+        if nucleotide == 65 or nucleotide == 71:
+            random_number = np.random.uniform()
+            if random_number > 0.5:
+                return 84
+            else:
+                return 67
+        elif nucleotide == 84 or nucleotide == 67:
+            random_number = np.random.uniform()
+            if random_number > 0.5:
+                return 65
+            else:
+                return 71
 
     x = np.random.random(len(seq))
     index = np.where(x > threshold)[0]
-    mutations = []
+    seq_array = np.array(seq)
+    transversion_func = np.frompyfunc(base_transversion, 1, 1)
+    seq_array[index] = transversion_func(seq_array[index])
+    return bytearray(seq_array)
 
-    for i in index:
-        nucleotide = seq[i]
-
-        if nucleotide == 'A':
-            random_number = np.random.uniform()
-            if random_number > 0.5:
-                mutations.append('T')
-            else:
-                mutations.append('C')
-        if nucleotide == 'G':
-            random_number = np.random.uniform()
-            if random_number > 0.5:
-                mutations.append('T')
-            else:
-                mutations.append('C')
-        if nucleotide == 'T':
-            random_number = np.random.uniform()
-            if random_number > 0.5:
-                mutations.append('A')
-            else:
-                mutations.append('G')
-        if nucleotide == 'C':
-            random_number = np.random.uniform()
-            if random_number > 0.5:
-                mutations.append('A')
-            else:
-                mutations.append('G')
-
-    return index, mutations
 
 
 def transition_transversion(seq, threshold_1, threshold_2):
@@ -125,11 +116,6 @@ def transition_transversion(seq, threshold_1, threshold_2):
     :param threshold_2: Probability of NO transversion.
     :return:
     """
-    # First transitions.
-    idx, mutations = transition(seq, threshold_1)
-    seq = list(seq)
-    # Then transversions.
-    for (i, new_bp) in zip(idx, mutations):
-        seq[i] = new_bp
+    # First transitions Then transversions.
 
-    return transversion(''.join(seq), threshold_2)
+    return transversion(transition(seq, threshold_1), threshold_2)

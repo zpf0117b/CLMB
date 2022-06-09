@@ -112,7 +112,7 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False, contras
 
 # Automatic Loss training for multi-task learning
 # Copied from https://github.com/Mikoto10032/AutomaticWeightedLoss
-class AutomaticWeightedLoss(nn.Module):
+class AutomaticWeightedLoss(_nn.Module):
     """automatically weighted multi-task loss
     Params：
         num: int，the number of loss
@@ -125,13 +125,13 @@ class AutomaticWeightedLoss(nn.Module):
     """
     def __init__(self, num=2):
         super(AutomaticWeightedLoss, self).__init__()
-        params = torch.ones(num, requires_grad=True)
-        self.params = torch.nn.Parameter(params)
+        params = _torch.ones(num, requires_grad=True)
+        self.params = _torch.nn.Parameter(params)
 
     def forward(self, *x):
         loss_sum = 0
         for i, loss in enumerate(x):
-            loss_sum += 0.5 / (self.params[i] ** 2) * loss + torch.log(1 + self.params[i] ** 2)
+            loss_sum += 0.5 / (self.params[i] ** 2) * loss + _torch.log(1 + self.params[i] ** 2)
         return loss_sum
 
 class VAE(_nn.Module):

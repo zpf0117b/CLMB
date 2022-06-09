@@ -76,12 +76,14 @@ def read_contigs(filehandle, minlength=100):
 
     return tnfs_arr, contignames, lengths_arr
 
-def read_contigs_augemntation(filehandle, minlength=100, store_dir="./", backup_iteration=100, usecuda=False):
+def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_iteration=100, usecuda=False):
     """Parses a FASTA file open in binary reading mode.
 
     Input:
         filehandle: Filehandle open in binary mode of a FASTA file
         minlength: Ignore any references shorter than N bases [100]
+        backup_iteration: numbers of generation for training
+        store_dir: the dir to store the augmentation data
 
     Outputs:
         tnfs: An (n_FASTA_entries x 103) matrix of tetranucleotide freq.
@@ -93,13 +95,6 @@ def read_contigs_augemntation(filehandle, minlength=100, store_dir="./", backup_
         raise ValueError('Minlength must be at least 4, not {}'.format(minlength))
 
     k = 4
-    # show the encoding rules
-    kmer_dict = {}
-    idx = 0
-    for k_mer in product('ACGT', repeat=k):
-        kmer = ''.join(k_mer)
-        kmer_dict[kmer] = idx
-        idx += 1
 
     norm = _vambtools.PushArray(_np.float32)
     gaussian = _vambtools.PushArray(_np.float32)
@@ -126,20 +121,20 @@ def read_contigs_augemntation(filehandle, minlength=100, store_dir="./", backup_
             gaussian.extend(t_gaussian)
 
         for i in range(backup_iteration):
-            indices, mutations = mimics.transition(entry.sequence.decode(), 1 - 0.021)
-            t_trans = mimics.mutate_kmers(entry.sequence.decode(), kmer_dict, t, k, indices, mutations)
+            mutations = mimics.transition(entry.sequence, 1 - 0.021)
+            t_trans = _vambtools.byte_seq_kmercounts(mutations, k)
             t_trans = t_trans / _np.sum(t_trans)
             trans.extend(t_trans)
 
         for i in range(backup_iteration):
-            indices, mutations = mimics.transversion(entry.sequence.decode(), 1 - 0.0105)
-            t_traver = mimics.mutate_kmers(entry.sequence.decode(), kmer_dict, t, k, indices, mutations)
+            mutations = mimics.transversion(entry.sequence.decode(), 1 - 0.0105)
+            t_traver = _vambtools.byte_seq_kmercounts(mutations, k)
             t_traver = t_traver / _np.sum(t_traver)
             traver.extend(t_traver)
 
         for i in range(backup_iteration):
-            indices, mutations = mimics.transition_transversion(entry.sequence.decode(), 1 - 0.014, 1 - 0.007)
-            t_mutated = mimics.mutate_kmers(entry.sequence.decode(), kmer_dict, t, k, indices, mutations)
+            mutations = mimics.transition_transversion(entry.sequence.decode(), 1 - 0.014, 1 - 0.007)
+            t_mutated = _vambtools.byte_seq_kmercounts(mutations, k)
             t_mutated = t_mutated / _np.sum(t_mutated)
             mutated.extend(t_mutated)
 
