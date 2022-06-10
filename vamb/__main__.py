@@ -2,6 +2,7 @@
 
 # More imports below, but the user's choice of processors must be parsed before
 # numpy can be imported.
+from ast import arg
 import sys
 import os
 import argparse
@@ -10,6 +11,8 @@ import datetime
 import time
 import shutil
 import random
+
+from vamb import augmentation
 
 DEFAULT_PROCESSES = min(os.cpu_count(), 8)
 
@@ -32,7 +35,7 @@ def log(string, logfile, indent=0):
     print(('\t' * indent) + string, file=logfile)
     logfile.flush()
 
-def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength, logfile, nepochs):
+def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength, logfile, nepochs, augdatashuffle, augmentation_store_dir, augmode, contrastive=True):
     begintime = time.time()
     log('\nLoading TNF', logfile, 0)
     log('Minimum sequence length: {}'.format(mincontiglength), logfile, 1)
@@ -66,20 +69,19 @@ def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength
     # Else parse FASTA files
     else:
         log('Loading data from FASTA file {}'.format(fastapath), logfile, 1)
-        if False:
+        if not contrastive:
             with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
                 tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength)
                 tnffile.close()
         else:
-            augmentation_store_dir = os.path.join(outdir, 'augmentation')
             os.system(f'mkdir -p {augmentation_store_dir}')
             with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
-                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, store_dir=augmentation_store_dir, backup_iteration=nepochs)
+                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, store_dir=augmentation_store_dir, backup_iteration=nepochs, augmode=augmode, augdatashuffle=augdatashuffle)
                 tnffile.close()
 
         vamb.vambtools.write_npz(os.path.join(outdir, 'tnf.npz'), tnfs)
         vamb.vambtools.write_npz(os.path.join(outdir, 'lengths.npz'), contiglengths)
-        with open(os.path.join(outdir.replace('results','data'), 'contignames.txt'),'w') as f:
+        with open(os.path.join(outdir, 'contignames.txt'),'w') as f:
             f.write('\n'.join(contignames))
             f.close()
 
@@ -91,7 +93,7 @@ def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength
     log('Kept {} bases in {} sequences'.format(nbases, ncontigs), logfile, 1)
     log('Processed TNF in {} seconds'.format(elapsed), logfile, 1)
 
-    return tnfs, contignames, contiglengths, None if False else augmentation_store_dir
+    return tnfs, contignames, contiglengths
 
 def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, ncontigs,
               minalignscore, minid, subprocesses, logfile):
@@ -142,7 +144,7 @@ def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, nco
     return rpkms
 
 from argparse import Namespace
-def trainvae(outdir, rpkms, tnfs, augmentationpath, nhiddens, nlatent, alpha, beta, dropout, cuda,
+def trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmentationpath, temperature, l2norm, nhiddens, nlatent, alpha, beta, dropout, cuda,
             batchsize, nepochs, lrate, batchsteps, logfile):
 
     begintime = time.time()
@@ -155,9 +157,9 @@ def trainvae(outdir, rpkms, tnfs, augmentationpath, nhiddens, nlatent, alpha, be
         batch_size=batchsize,
         validation_size=4096,
         visualize_size=25600,
-        l2_norm=True, # if False, temperature = 1e+x; if True, temperature < 1
-        temperature=2,
-        aug_mode=(-1,-1)
+        l2_norm=l2norm, # if False, temperature = 1e+x; if True, temperature < 1
+        temperature=temperature,
+        aug_mode=augmode
     )
     dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
                                                    destroy=True, cuda=cuda)
@@ -170,15 +172,19 @@ def trainvae(outdir, rpkms, tnfs, augmentationpath, nhiddens, nlatent, alpha, be
     print('', file=logfile)
 
     # clmb
-    if True:
-        vae = vamb.encode.VAE(ntnf=int(tnfs.shape[1]), nsamples=nsamples, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
-        modelpath = os.path.join(outdir.replace('results','data'), f"{aug_all_method[hparams.aug_mode[0]]+'_'+aug_all_method[hparams.aug_mode[1]]}.pt")
-        vae.trainmodel(dataloader, augmentationpath, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams)
+    if contrastive:
+        if True:
+            vae = vamb.encode.VAE(ntnf=int(tnfs.shape[1]), nsamples=nsamples, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
+            modelpath = os.path.join(outdir.replace('results','data'), f"{aug_all_method[hparams.aug_mode[0]]+'_'+aug_all_method[hparams.aug_mode[1]]}.pt")
+            vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams, augmentationpath=augmentationpath, augdatashuffle=augdatashuffle)
+        else:
+            modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams.aug_mode[0]]+' '+aug_all_method[hparams.aug_mode[1]]+' '+str(hparams.hidden_mlp)}.pt")
+            vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
+            vae.to(('cuda' if cuda else 'cpu'))
     else:
-        modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams.aug_mode[0]]+' '+aug_all_method[hparams.aug_mode[1]]+' '+str(hparams.hidden_mlp)}.pt")
-        vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
-        vae.to(('cuda' if cuda else 'cpu'))
-
+        vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=nlatent, alpha=alpha, beta=beta, dropout=dropout, cuda=cuda)
+        modelpath = os.path.join(outdir, 'model.pt')
+        vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps, logfile=logfile, modelfile=modelpath)
     latent = vae.encode(dataloader)
     vamb.vambtools.write_npz(os.path.join(outdir, 'latent.npz'), latent)
     del vae # Needed to free "latent" array's memory references?
@@ -292,7 +298,9 @@ def write_fasta(outdir, clusterspath, fastapath, contignames, contiglengths, min
     elapsed = round(time.time() - begintime, 2)
     log('Wrote FASTA in {} seconds'.format(elapsed), logfile, 1)
 
-def run(outdir, fastapath, tnfpath, namespath, lengthspath, augmentationpath, bampaths, rpkmpath, jgipath,
+def run(outdir, fastapath, tnfpath, namespath, lengthspath, 
+        contrastive, augmode, augdatashuffle, augmentationpath, temperature, l2norm,
+        bampaths, rpkmpath, jgipath,
         mincontiglength, norefcheck, minalignscore, minid, subprocesses, nhiddens, nlatent,
         nepochs, batchsize, cuda, alpha, beta, dropout, lrate, batchsteps, windowsize,
         minsuccesses, minclustersize, separator, maxclusters, minfasta, logfile):
@@ -300,16 +308,17 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, augmentationpath, ba
     log('Starting Vamb version ' + '.'.join(map(str, vamb.__version__)), logfile)
     log('Date and time is ' + str(datetime.datetime.now()), logfile, 1)
     begintime = time.time()
-    print(f'Start at {time.time()}')
+    print(f'Start at {round(time.time(), 2)}')
 
     # Get TNFs, save as npz
-    tnfs, contignames, contiglengths, augmentation_store_dir = calc_tnf(outdir, fastapath, tnfpath, namespath,
-                                            lengthspath, mincontiglength, logfile, nepochs)
-    augmentationpath = augmentation_store_dir if augmentation_store_dir is not None else augmentationpath 
-    # Maybe None
-    if not (os.path.exists(augmentationpath) and os.listdir(augmentationpath) >= nepochs * 4):
-        raise FileNotFoundError('Not an existing directory or not an directory with enough files for training' + augmentationpath)
-    print(f'TNFs completed at {time.time()}')
+    if contrastive and augmentationpath is None:
+        augmentationpath = os.path.join(outdir, 'augmentation')
+    tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, tnfpath, namespath,
+                                            lengthspath, mincontiglength, logfile, nepochs, augdatashuffle, augmentationpath, augmode, contrastive)
+
+    # if not (os.path.exists(augmentationpath) and len(os.listdir(augmentationpath)) >= nepochs * 4):
+    #     raise FileNotFoundError('Not an existing directory or not an directory with enough files for training' + augmentationpath)
+    print(f'TNFs completed at {round(time.time(), 2)}')
 
     # Parse BAMs, save as npz
     refhash = None if norefcheck else vamb.vambtools._hash_refnames(contignames)
@@ -322,21 +331,21 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath, augmentationpath, ba
         else:
             rpkms_data = np.load(rpkmpath)
             rpkms = rpkms_data[rpkms_data.files[0]]
-    print(f'RPKM completed at {time.time()}')
+    print(f'RPKM completed at {round(time.time(), 2)}')
 
     # Train, save model
-    mask, latent = trainvae(outdir, rpkms, tnfs, augmentationpath, nhiddens, nlatent, alpha, beta,
+    mask, latent = trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmentationpath, temperature, l2norm, nhiddens, nlatent, alpha, beta,
                             dropout, cuda, batchsize, nepochs, lrate, batchsteps, logfile)
 
     del tnfs, rpkms
     contignames = [c for c, m in zip(contignames, mask) if m]
-    print(f'Deep learning completed at {time.time()}')
+    print(f'Deep learning completed at {round(time.time(), 2)}')
 
     # Cluster, save tsv file
     clusterspath = os.path.join(outdir, 'clusters.tsv')
     cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclusters,
             minclustersize, separator, cuda, logfile)
-    print(f'Clustering completed at {time.time()}')
+    print(f'Clustering completed at {round(time.time(), 2)}')
     del latent
 
     if minfasta is not None:
@@ -375,7 +384,17 @@ def main():
     tnfos.add_argument('--tnfs', metavar='', help='path to .npz of TNF')
     tnfos.add_argument('--names', metavar='', help='path to .npz of names of sequences')
     tnfos.add_argument('--lengths', metavar='', help='path to .npz of seq lengths')
-    tnfos.add_argument('--augmentation', metavar='', help='path to augmentation dir')
+
+    # Contrastive learning arguments
+    contrastiveos = parser.add_argument_group(title='Contrastive learning input (augmentation directory required)')
+    contrastiveos.add_argument('--contrastive', metavar='', action='store_false', help='Whether to perform contrastive learning(CLMB) or not(VAMB)')
+    contrastiveos.add_argument('--augmode', nargs = 2, type = int, default=[-1, -1],
+                         help='The augmentation method')
+    contrastiveos.add_argument('--augdatashuffle', metavar='', action='store_ture', 
+            help='Whether to shuffle the training augmentation data (True: For each training, random select the augmentation data from the augmentation dir pool.)')
+    contrastiveos.add_argument('--augmentation', metavar='', help='path to augmentation dir')
+    contrastiveos.add_argument('--temperature', metavar='', help='The temperature for the normalized temperature-scaled cross entropy loss')
+    contrastiveos.add_argument('--l2norm', metavar='', action='store_ture', help='Whether to normalize the temperature-scaled cross entropy loss')
 
     # RPKM arguments
     rpkmos = parser.add_argument_group(title='RPKM input (either BAMs, JGI or .npz required)')
@@ -472,6 +491,16 @@ def main():
                 raise argparse.ArgumentTypeError('Must specify either FASTA or the three .npz inputs')
         if not os.path.isfile(args.fasta):
             raise FileNotFoundError('Not an existing non-directory file: ' + args.fasta)
+
+    # Check the running mode (CLMB or VAMB)
+    if args.contrastive:
+        if args.augmentation is None:
+            augmentation_data_dir = os.path.join(args.outdir, 'augmentation')
+        else:
+            augmentation_data_dir = args.augmentation
+        
+        if not (-2 < args.augmode[0] < 4 and -2 < args.augmode[1] < 4):
+            raise argparse.ArgumentTypeError('If contrastive learning is on, augmode must >-2 and <4')
 
     # Make sure only one RPKM input is there
     rpkm_flag = True
@@ -586,7 +615,12 @@ def main():
             args.tnfs,
             args.names,
             args.lengths,
-            args.augmentation,
+            args.contrastive,
+            args.augmode,
+            args.augdatashuffle,
+            augmentation_data_dir,
+            args.temperature,
+            args.l2norm,
             args.bamfiles,
             args.rpkm if rpkm_flag else r'padding$padding',
             args.jgi,

@@ -9,6 +9,7 @@ import sys as _sys
 import os as _os
 import numpy as _np
 from itertools import product
+import random
 import vamb.vambtools as _vambtools
 from vamb._vambtools import _kmercounts
 from . import mimics
@@ -79,7 +80,7 @@ def read_contigs(filehandle, minlength=100):
 
     return tnfs_arr, contignames, lengths_arr
 
-def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_iteration=100, usecuda=False):
+def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_iteration=100, augmode=[-1,-1], augdatashuffle=False, usecuda=False):
     """Parses a FASTA file open in binary reading mode.
 
     Input:
@@ -115,71 +116,115 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
     count = 0
     while count * count < backup_iteration:
         count += 1
+    # Create backup augmentation pools
+    pools = 2
+    gaussian_count, trans_count, traver_count, mutated_count = [], [], [], []
+    if augdatashuffle:
+        pools = 3
+        augmode[2] = -1
+    # Pool 1
+    for i in range(pools):
+        if augmode[i] == -1:
+            # Constraits: transition frequency = 2 * transversion frequency = 4 * gaussian noise frequency
+            gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = count - count*4//14 - count*2//14 - count//2, count*4//14, count*2//14, count//2
+        elif augmode[i] == 0:
+            gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = count, 0, 0, 0
+        elif augmode[i] == 1:
+            gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = 0, count, 0, 0
+        elif augmode[i] == 2:
+            gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = 0, 0, count, 0
+        elif augmode[i] == 3:
+            gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = 0, 0, 0, count
 
-    for entry in entries:
-        if len(entry) < minlength:
-            continue
+        for entry in entries:
+            if len(entry) < minlength:
+                continue
+            
+            t = entry.kmercounts(k)
+            t_norm = t / _np.sum(t)
+            _np.add(t_norm, - 1/(2*4**k), out=t_norm)
 
-        t = entry.kmercounts(k)
-        t_norm = t / _np.sum(t)
-        _np.add(t_norm, - 1/(2*4**k), out=t_norm)
-        norm.extend(t_norm)
+            if i == pools - 1:
+                norm.extend(t_norm)
 
-        for i in range(count):
-            t_gaussian = mimics.add_noise(t_norm)
-            gaussian.extend(t_gaussian)
-            print(sum(t_gaussian),end=' ')
+            for j in range(gaussian_count[i]):
+                t_gaussian = mimics.add_noise(t_norm)
+                gaussian.extend(t_gaussian)
+                print(sum(t_gaussian),end=' ')
 
-        mutations = mimics.transition(entry.sequence, 1 - 0.021, count)
-        for i in range(count):
-            _kmercounts(bytearray(mutations[i]), k, counts_kmer)
-            t_trans = counts_kmer / _np.sum(counts_kmer)
-            _np.add(t_trans, - 1/(2*4**k), out=t_trans)
-            trans.extend(t_trans)
-            print(sum(t_trans),end=' ')
+            mutations = mimics.transition(entry.sequence, 1 - 0.021, trans_count[i])
+            for j in range(trans_count[i]):
+                _kmercounts(bytearray(mutations[j]), k, counts_kmer)
+                t_trans = counts_kmer / _np.sum(counts_kmer)
+                _np.add(t_trans, - 1/(2*4**k), out=t_trans)
+                trans.extend(t_trans)
+                #print(sum(t_trans),end=' ')
 
-        mutations = mimics.transversion(entry.sequence, 1 - 0.0105, count)
-        for i in range(count):
-            _kmercounts(bytearray(mutations[i]), k, counts_kmer)
-            t_traver = counts_kmer / _np.sum(counts_kmer)
-            _np.add(t_traver, - 1/(2*4**k), out=t_traver)
-            traver.extend(t_traver)
-            print(sum(t_traver),end=' ')
+            mutations = mimics.transversion(entry.sequence, 1 - 0.0105, traver_count[i])
+            for j in range(traver_count[i]):
+                _kmercounts(bytearray(mutations[j]), k, counts_kmer)
+                t_traver = counts_kmer / _np.sum(counts_kmer)
+                _np.add(t_traver, - 1/(2*4**k), out=t_traver)
+                traver.extend(t_traver)
+                #print(sum(t_traver),end=' ')
 
-        mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007, count)
-        for i in range(count):
-            _kmercounts(bytearray(mutations[i]), k, counts_kmer)
-            t_mutated = counts_kmer / _np.sum(counts_kmer)
-            _np.add(t_mutated, - 1/(2*4**k), out=t_mutated)
-            mutated.extend(t_mutated)
-            print(sum(t_mutated),end=' ')
+            mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007, mutated_count[i])
+            for j in range(mutated_count[i]):
+                _kmercounts(bytearray(mutations[j]), k, counts_kmer)
+                t_mutated = counts_kmer / _np.sum(counts_kmer)
+                _np.add(t_mutated, - 1/(2*4**k), out=t_mutated)
+                mutated.extend(t_mutated)
+                #print(sum(t_mutated),end=' ')
 
-        lengths.append(len(entry))
-        contignames.append(entry.header)
+            if i == pools - 1:
+                lengths.append(len(entry))
+                contignames.append(entry.header)
+
+        # Don't use reshape since it creates a new array object with shared memory
+        gaussian_arr = gaussian.take()
+        gaussian_arr.shape = (-1, gaussian_count[i], 4**k)
+        trans_arr = trans.take()
+        trans_arr.shape = (-1, trans_count[i], 4**k)
+        traver_arr = traver.take()
+        traver_arr.shape = (-1, traver_count[i], 4**k)
+        mutated_arr = mutated.take()
+        mutated_arr.shape = (-1, mutated_count[i], 4**k)
+
+        index = 0
+        index_list = range(count)
+        random.shuffle(index_list)
+        for j2 in range(gaussian_count[i]):
+            gaussian_save = gaussian_arr[:,j2,:]
+            gaussian_save.shape = (-1, 4**k)
+            _np.savez(f"{store_dir}/pool{i}_gaussian_{j2}_index{index_list[index]}.npz", gaussian_save)
+            index += 1
+
+        for j2 in range(trans_count[i]):
+            trans_save = trans_arr[:,j2,:]
+            trans_save.shape = (-1, 4**k)
+            _np.savez(f"{store_dir}/pool{i}_trans_{j2}_index{index_list[index]}.npz", trans_save)
+            index += 1
+
+        for j2 in range(traver_count[i]):
+            traver_save = traver_arr[:,j2,:]
+            traver_save.shape = (-1, 4**k)
+            _np.savez(f"{store_dir}/pool{i}_traver_{j2}_index{index_list[index]}.npz", traver_save)
+            index += 1
+
+        for j2 in range(mutated_count[i]):
+            mutated_save = mutated_arr[:,j2,:]
+            mutated_save.shape = (-1, 4**k)
+            _np.savez(f"{store_dir}/pool{i}_mutated_{j2}_index{index_list[index]}.npz", mutated_save)
+            index += 1
+
+        gaussian_arr.clear()
+        trans_arr.clear()
+        traver_arr.clear()
+        mutated_arr.clear()
         print(time())
-    # Don't use reshape since it creates a new array object with shared memory
-    norm_arr = norm.take()
-    norm_arr.shape = (len(norm_arr)//(4**k), 4**k)
-    gaussian_arr = gaussian.take()
-    gaussian_arr.shape = (-1, backup_iteration, 4**k)
-    trans_arr = trans.take()
-    trans_arr.shape = (-1, backup_iteration, 4**k)
-    traver_arr = traver.take()
-    traver_arr.shape = (-1, backup_iteration, 4**k)
-    mutated_arr = mutated.take()
-    mutated_arr.shape = (-1, backup_iteration, 4**k)
-
-    for i in range(backup_iteration):
-        gaussian_save = gaussian_arr[:,i,:]
-        gaussian_save.shape = (-1, 4**k)
-        trans_save = trans_arr[:,i,:]
-        trans_save.shape = (-1, 4**k)
-        traver_save = traver_arr[:,i,:]
-        traver_save.shape = (-1, 4**k)
-        mutated_save = mutated_arr[:,i,:]
-        mutated_save.shape = (-1, 4**k)
-        _np.savez(f"{store_dir}/backup_arr_iter{i}.npz", gaussian_save, trans_save, traver_save, mutated_save)
 
     lengths_arr = lengths.take()
+    norm_arr = norm.take()
+    norm_arr.shape = (len(norm_arr)//(4**k), 4**k)
 
     return norm_arr, contignames, lengths_arr

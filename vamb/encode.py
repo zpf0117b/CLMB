@@ -15,7 +15,8 @@ Usage:
 __cmd_doc__ = """Encode depths and TNF using a VAE to latent representation"""
 
 import os
-from random import sample
+import random
+import glob
 import numpy as _np
 import torch as _torch
 _torch.manual_seed(42)
@@ -155,7 +156,7 @@ class VAE(_nn.Module):
     def __init__(self, ntnf, nsamples, nhiddens=None, nlatent=32, alpha=None,
                  beta=200, dropout=0.2, cuda=False, c=False):
         if nlatent < 1:
-            raise ValueError('Minimum 1 latent neuron, not {}'.format(latent))
+            raise ValueError('Minimum 1 latent neuron, not {}'.format(nlatent))
 
         if nsamples < 1:
             raise ValueError('nsamples must be > 0, not {}'.format(nsamples))
@@ -511,8 +512,8 @@ class VAE(_nn.Module):
 
         return vae
 
-    def trainmodel(self, dataloader, augmentationpath, nepochs=500, lrate=1e-3,
-                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams=None):
+    def trainmodel(self, dataloader, nepochs=500, lrate=1e-3,
+                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams=None, augmentationpath=None, augdatashuffle=False):
         """Train the autoencoder from depths array and tnf array.
         Inputs:
             dataloader: DataLoader made by make_dataloader
@@ -570,35 +571,29 @@ class VAE(_nn.Module):
         if self.contrast:
             awl = AutomaticWeightedLoss(2)
             optimizer = _Adam([{'params':self.parameters(), 'lr':lrate}, {'params': awl.parameters(), 'weight_decay': 0}])
-            # for epoch in range(nepochs):
-            #     augment_met = [augmentation.GaussianNoise(), augmentation.NumericalChange(),augmentation.WordDrop(), augmentation.FragmentTransfer(),augmentation.Reverse()]
-            #     aug_method0 = None if hparams.aug_mode[0] == None else augment_met[hparams.aug_mode[0]]
-            #     aug_method1 = None if hparams.aug_mode[1] == None else augment_met[hparams.aug_mode[1]]
-            #     ds0 =  _torch.cat(dataloader.dataset.tensors, 1) if aug_method0 is None else aug_method0(_torch.cat(dataloader.dataset.tensors, 1),mode=hparams.aug_mode)
-            #     ds1 =  _torch.cat(dataloader.dataset.tensors, 1) if aug_method1 is None else aug_method1(_torch.cat(dataloader.dataset.tensors, 1),mode=hparams.aug_mode)
-                
-            #     if epoch % 10 == 0:
-            #         print('d', _torch.sum(_torch.pow(_torch.sub(ds0,ds1), 2)), file=logfile, end='\n')
-            #     dataloader = _DataLoader(dataset=_TensorDataset(ds0.narrow(1, 0, self.nsamples), ds0.narrow(1, self.nsamples, self.ntnf), ds1.narrow(1, 0, self.nsamples), ds1.narrow(1, self.nsamples, self.ntnf)),
-            #                     batch_size=hparams.batch_size, 
-            #                     shuffle=True, 
-            #                     num_workers=0, pin_memory=False,
-            #                     # sampler=BatchSampler(SubsetRandomSampler(list(range(hparams.train_size))),batch_size=hparams.batch_size,drop_last=True),
-            #                     drop_last=False)
+
             count = 0
             while count * count < nepochs:
                 count += 1
             for epoch in range(nepochs):
                 depthstensor, tnftensor = dataloader.dataset.tensors
-                aug_archive1, aug_archive2 = _np.load(f'{augmentationpath+os.sep}backup_arr_iter{str(epoch//count)}.npz'), _np.load(f'{augmentationpath+os.sep}backup_arr_iter{str(epoch)%count}.npz')
-                if hparams.aug_mode == (-1, -1):
-                    # Sample the augmentation methods without replacement. We use the sample amount to determine the frequency of methods.  
-                    sample_list = sample([0,1,1,1,1,1,1,2,2,2,3,3,3,3,3,3,3,3,3], 2)
-                    # aug_arr1, aug_arr2 = aug_arr[f'arr_{sample_list[0]}'], aug_arr[f'arr_{sample_list[1]}']
-                    aug_arr1, aug_arr2 = aug_archive1[f'arr_{sample_list[0]}'], aug_archive2[f'arr_{sample_list[1]}']
-                else:
+                aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool1*index{epoch//count}*'), glob.glob(rf'{augmentationpath+os.sep}pool1*index{epoch%count}*')
+                if augdatashuffle:
+                    shuffle_file = random.randrange(0, 3 * count - 1)
+                    if shuffle_file > 2 * count -1:
+                        aug_archive1_file = glob.glob(rf'{augmentationpath+os.sep}pool3*index{shuffle_file - 2 * count}*')
+                    shuffle_file2 = random.randrange(0, 3 * count - 1)
+                    if shuffle_file2 > 2 * count -1:
+                        aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool3*index{shuffle_file2 - 2 * count}*')
+                aug_archive1, aug_archive2 = _np.load(aug_archive1_file[0]), _np.load(aug_archive2_file[0])
+                # if hparams.aug_mode == (-1, -1):
+                #     # Sample the augmentation methods without replacement. We use the sample amount to determine the frequency of methods.  
+                #     sample_list = sample([0,1,1,1,1,1,1,2,2,2,3,3,3,3,3,3,3,3,3], 2)
+                #     # aug_arr1, aug_arr2 = aug_arr[f'arr_{sample_list[0]}'], aug_arr[f'arr_{sample_list[1]}']
+                #     aug_arr1, aug_arr2 = aug_archive1[f'arr_{sample_list[0]}'], aug_archive2[f'arr_{sample_list[1]}']
+                # else:
                     # aug_arr1, aug_arr2 = aug_arr[f'arr_{hparams.aug_mode[0]}'], aug_arr[f'arr_{hparams.aug_mode[1]}']
-                    aug_arr1, aug_arr2 = aug_archive1[f'arr_{hparams.aug_mode[0]}'], aug_archive2[f'arr_{hparams.aug_mode[1]}']
+                aug_arr1, aug_arr2 = aug_archive1['arr_0'], aug_archive2['arr_0']
                 _vambtools.zscore(aug_arr1, axis=0, inplace=True)
                 _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                 aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
