@@ -27,7 +27,7 @@ from argparse import Namespace
 
 from torch import nn as _nn
 from torch.optim import Adam, SGD
-from torchlars import LARS
+from . import lars
 from torch.nn.functional import softmax as _softmax
 from torch.utils.data import DataLoader as _DataLoader
 from torch.utils.data.dataset import TensorDataset as _TensorDataset
@@ -601,7 +601,7 @@ class VAE(_nn.Module):
                 #print(depthstensor.shape, aug_tensor1.shape, aug_tensor2.shape)
                 data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=hparams.batch_size, drop_last=True,
                             shuffle=True, num_workers=dataloader.num_workers,pin_memory=dataloader.pin_memory)
-                self.trainepoch(data_loader, epoch, LARS(optimizer), batchsteps_set, logfile, hparams, awl)
+                self.trainepoch(data_loader, epoch, lars.LARS(optimizer), batchsteps_set, logfile, hparams, awl)
         # vamb
         else:
             optimizer = Adam(self.parameters(), lr=lrate)
