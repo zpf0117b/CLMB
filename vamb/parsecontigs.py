@@ -110,18 +110,16 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
     lengths = _vambtools.PushArray(_np.int)
     contignames = list()
 
-    entries = _vambtools.byte_iterfasta(filehandle)
-
     # We do not generate the number due to time cost. We just find the minimum augmentation we need for all iteration (count)
     count = 0
     while count * count < backup_iteration:
         count += 1
     # Create backup augmentation pools
     pools = 2
-    gaussian_count, trans_count, traver_count, mutated_count = [], [], [], []
+    gaussian_count, trans_count, traver_count, mutated_count = [0,0,0], [0,0,0], [0,0,0], [0,0,0]
     if augdatashuffle:
         pools = 3
-        augmode[2] = -1
+        augmode.append(-1)
     # Pool 1
     for i in range(pools):
         if augmode[i] == -1:
@@ -136,6 +134,8 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
         elif augmode[i] == 3:
             gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = 0, 0, 0, count
 
+        filehandle.filehandle.seek(0, 0)
+        entries = _vambtools.byte_iterfasta(filehandle)
         for entry in entries:
             if len(entry) < minlength:
                 continue
@@ -143,14 +143,14 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
             t = entry.kmercounts(k)
             t_norm = t / _np.sum(t)
             _np.add(t_norm, - 1/(2*4**k), out=t_norm)
-
-            if i == pools - 1:
+            #print(i,pools-1)
+            if i == 0:
                 norm.extend(t_norm)
 
             for j in range(gaussian_count[i]):
                 t_gaussian = mimics.add_noise(t_norm)
                 gaussian.extend(t_gaussian)
-                print(sum(t_gaussian),end=' ')
+                #print(sum(t_gaussian),end=' ')
 
             mutations = mimics.transition(entry.sequence, 1 - 0.021, trans_count[i])
             for j in range(trans_count[i]):
@@ -176,7 +176,7 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
                 mutated.extend(t_mutated)
                 #print(sum(t_mutated),end=' ')
 
-            if i == pools - 1:
+            if i == 0:
                 lengths.append(len(entry))
                 contignames.append(entry.header)
 
@@ -191,7 +191,7 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
         mutated_arr.shape = (-1, mutated_count[i], 4**k)
 
         index = 0
-        index_list = range(count)
+        index_list = list(range(count))
         random.shuffle(index_list)
         for j2 in range(gaussian_count[i]):
             gaussian_save = gaussian_arr[:,j2,:]
@@ -217,10 +217,10 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
             _np.savez(f"{store_dir}/pool{i}_mutated_{j2}_index{index_list[index]}.npz", mutated_save)
             index += 1
 
-        gaussian_arr.clear()
-        trans_arr.clear()
-        traver_arr.clear()
-        mutated_arr.clear()
+        gaussian.clear()
+        trans.clear()
+        traver.clear()
+        mutated.clear()
         print(time())
 
     lengths_arr = lengths.take()

@@ -63,7 +63,7 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False, contras
         raise ValueError('Minimum batchsize of 1, not {}'.format(batchsize))
 
     if len(rpkm) != len(tnf):
-        raise ValueError('Lengths of RPKM and TNF must be the same')
+        raise ValueError(f'Lengths of RPKM:{len(rpkm)} and TNF:{ len(tnf)} must be the same')
 
     if not (rpkm.dtype == tnf.dtype == _np.float32):
         raise ValueError('TNF and RPKM must be Numpy arrays of dtype float32')
@@ -395,7 +395,7 @@ class VAE(_nn.Module):
                 loss2, ce2, sse2, kld2 = self.calc_loss(depths, depths_out2, aug_arr2,
                                                     tnf_out2, mu2, logsigma2)
 
-                loss = awl(loss3,  50*(loss1+loss2))
+                loss = awl(loss3,  0.01*(loss1+loss2))
 
                 loss.backward()
                 optimizer.step()
@@ -577,14 +577,14 @@ class VAE(_nn.Module):
                 count += 1
             for epoch in range(nepochs):
                 depthstensor, tnftensor = dataloader.dataset.tensors
-                aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool1*index{epoch//count}*'), glob.glob(rf'{augmentationpath+os.sep}pool1*index{epoch%count}*')
+                aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool0*index{epoch//count}*'), glob.glob(rf'{augmentationpath+os.sep}pool1*index{epoch%count}*')
                 if augdatashuffle:
                     shuffle_file = random.randrange(0, 3 * count - 1)
                     if shuffle_file > 2 * count -1:
-                        aug_archive1_file = glob.glob(rf'{augmentationpath+os.sep}pool3*index{shuffle_file - 2 * count}*')
+                        aug_archive1_file = glob.glob(rf'{augmentationpath+os.sep}pool2*index{shuffle_file - 2 * count}*')
                     shuffle_file2 = random.randrange(0, 3 * count - 1)
                     if shuffle_file2 > 2 * count -1:
-                        aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool3*index{shuffle_file2 - 2 * count}*')
+                        aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool2*index{shuffle_file2 - 2 * count}*')
                 aug_archive1, aug_archive2 = _np.load(aug_archive1_file[0]), _np.load(aug_archive2_file[0])
                 # if hparams.aug_mode == (-1, -1):
                 #     # Sample the augmentation methods without replacement. We use the sample amount to determine the frequency of methods.  
@@ -597,7 +597,8 @@ class VAE(_nn.Module):
                 _vambtools.zscore(aug_arr1, axis=0, inplace=True)
                 _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                 aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
-                data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=dataloader.batchsize, drop_last=True,
+                #print(depthstensor.shape, aug_tensor1.shape, aug_tensor2.shape)
+                data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=hparams.batch_size, drop_last=True,
                             shuffle=True, num_workers=dataloader.num_workers,pin_memory=dataloader.pin_memory)
                 self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
         # vamb

@@ -43,9 +43,9 @@ def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength
     if fastapath is None:
         log('Loading TNF from npz array {}'.format(tnfpath), logfile, 1)
         tnfs = vamb.vambtools.read_npz(tnfpath)
-        log('Loading contignames from npz array {}'.format(namespath), logfile, 1)
-        contignames = vamb.vambtools.read_npz(namespath)
-        log('Loading contiglengths from text {}'.format(lengthspath), logfile, 1)
+        log('Loading contiglengths from npz array {}'.format(lengthspath), logfile, 1)
+        contiglengths = vamb.vambtools.read_npz(lengthspath)
+        log('Loading contignames from text {}'.format(namespath), logfile, 1)
         with open(namespath,'r') as f:
             raw_contignames = f.readlines()
             contignames = [rawstr.replace('\n','') for rawstr in raw_contignames]
@@ -386,15 +386,15 @@ def main():
     tnfos.add_argument('--lengths', metavar='', help='path to .npz of seq lengths')
 
     # Contrastive learning arguments
-    contrastiveos = parser.add_argument_group(title='Contrastive learning input (augmentation directory required)')
-    contrastiveos.add_argument('--contrastive', metavar='', action='store_false', help='Whether to perform contrastive learning(CLMB) or not(VAMB)')
-    contrastiveos.add_argument('--augmode', nargs = 2, type = int, default=[-1, -1],
-                         help='The augmentation method')
-    contrastiveos.add_argument('--augdatashuffle', metavar='', action='store_ture', 
+    contrastiveos = parser.add_argument_group(title='Contrastive learning input')
+    contrastiveos.add_argument('--contrastive', action='store_true', help='Whether to perform contrastive learning(CLMB) or not(VAMB). Default: False')
+    contrastiveos.add_argument('--augmode', metavar='', nargs = 2, type = int, default=[-1, -1],
+                         help='The augmentation method. Requires 2 int. Choices: -1,0,1,2,3')
+    contrastiveos.add_argument('--augdatashuffle', action='store_true', 
             help='Whether to shuffle the training augmentation data (True: For each training, random select the augmentation data from the augmentation dir pool.)')
     contrastiveos.add_argument('--augmentation', metavar='', help='path to augmentation dir')
-    contrastiveos.add_argument('--temperature', metavar='', help='The temperature for the normalized temperature-scaled cross entropy loss')
-    contrastiveos.add_argument('--l2norm', metavar='', action='store_ture', help='Whether to normalize the temperature-scaled cross entropy loss')
+    contrastiveos.add_argument('--temperature', metavar='', default=2, help='The temperature for the normalized temperature-scaled cross entropy loss')
+    contrastiveos.add_argument('--l2norm', action='store_false', help='Whether to normalize the temperature-scaled cross entropy false. Default: True')
 
     # RPKM arguments
     rpkmos = parser.add_argument_group(title='RPKM input (either BAMs, JGI or .npz required)')
