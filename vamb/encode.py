@@ -26,7 +26,8 @@ import math
 from argparse import Namespace
 
 from torch import nn as _nn
-from torch.optim import Adam as _Adam
+from torch.optim import Adam, SGD
+from torchlars import LARS
 from torch.nn.functional import softmax as _softmax
 from torch.utils.data import DataLoader as _DataLoader
 from torch.utils.data.dataset import TensorDataset as _TensorDataset
@@ -570,7 +571,7 @@ class VAE(_nn.Module):
         # simclr
         if self.contrast:
             awl = AutomaticWeightedLoss(2)
-            optimizer = _Adam([{'params':self.parameters(), 'lr':lrate}, {'params': awl.parameters(), 'weight_decay': 0}])
+            optimizer = SGD([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 100}, {'params': awl.parameters(),'lr':lrate, 'weight_decay': 10}])
 
             count = 0
             while count * count < nepochs:
@@ -600,10 +601,10 @@ class VAE(_nn.Module):
                 #print(depthstensor.shape, aug_tensor1.shape, aug_tensor2.shape)
                 data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=hparams.batch_size, drop_last=True,
                             shuffle=True, num_workers=dataloader.num_workers,pin_memory=dataloader.pin_memory)
-                self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
+                self.trainepoch(data_loader, epoch, LARS(optimizer), batchsteps_set, logfile, hparams, awl)
         # vamb
         else:
-            optimizer = _Adam(self.parameters(), lr=lrate)
+            optimizer = Adam(self.parameters(), lr=lrate)
             for epoch in range(nepochs):
                 dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
 
@@ -616,7 +617,7 @@ class VAE(_nn.Module):
 
         return None
 
-    def nt_xent_loss(self, out_1, out_2, temperature=2, eps=1e-6):
+    def nt_xent_loss(self, out_1, out_2, temperature=0.1, eps=1e-6):
         """
             assume out_1 and out_2 are normalized
             out_1: [batch_size, dim]

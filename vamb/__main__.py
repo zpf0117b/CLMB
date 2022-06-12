@@ -11,6 +11,7 @@ import datetime
 import time
 import shutil
 import random
+from math import sqrt
 
 from vamb import augmentation
 
@@ -144,7 +145,7 @@ def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, nco
     return rpkms
 
 from argparse import Namespace
-def trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmentationpath, temperature, l2norm, nhiddens, nlatent, alpha, beta, dropout, cuda,
+def trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmentationpath, temperature, nhiddens, nlatent, alpha, beta, dropout, cuda,
             batchsize, nepochs, lrate, batchsteps, logfile):
 
     begintime = time.time()
@@ -157,7 +158,6 @@ def trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmenta
         batch_size=batchsize,
         validation_size=4096,
         visualize_size=25600,
-        l2_norm=l2norm, # if False, temperature = 1e+x; if True, temperature < 1
         temperature=temperature,
         aug_mode=augmode
     )
@@ -299,7 +299,7 @@ def write_fasta(outdir, clusterspath, fastapath, contignames, contiglengths, min
     log('Wrote FASTA in {} seconds'.format(elapsed), logfile, 1)
 
 def run(outdir, fastapath, tnfpath, namespath, lengthspath, 
-        contrastive, augmode, augdatashuffle, augmentationpath, temperature, l2norm,
+        contrastive, augmode, augdatashuffle, augmentationpath, temperature,
         bampaths, rpkmpath, jgipath,
         mincontiglength, norefcheck, minalignscore, minid, subprocesses, nhiddens, nlatent,
         nepochs, batchsize, cuda, alpha, beta, dropout, lrate, batchsteps, windowsize,
@@ -334,7 +334,7 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath,
     print(f'RPKM completed at {round(time.time(), 2)}')
 
     # Train, save model
-    mask, latent = trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmentationpath, temperature, l2norm, nhiddens, nlatent, alpha, beta,
+    mask, latent = trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmentationpath, temperature, nhiddens, nlatent, alpha, beta,
                             dropout, cuda, batchsize, nepochs, lrate, batchsteps, logfile)
 
     del tnfs, rpkms
@@ -393,8 +393,7 @@ def main():
     contrastiveos.add_argument('--augdatashuffle', action='store_true', 
             help='Whether to shuffle the training augmentation data (True: For each training, random select the augmentation data from the augmentation dir pool.)')
     contrastiveos.add_argument('--augmentation', metavar='', help='path to augmentation dir')
-    contrastiveos.add_argument('--temperature', metavar='', default=2, help='The temperature for the normalized temperature-scaled cross entropy loss')
-    contrastiveos.add_argument('--l2norm', action='store_false', help='Whether to normalize the temperature-scaled cross entropy false. Default: True')
+    contrastiveos.add_argument('--temperature', metavar='', default=0.1, help='The temperature for the normalized temperature-scaled cross entropy loss')
 
     # RPKM arguments
     rpkmos = parser.add_argument_group(title='RPKM input (either BAMs, JGI or .npz required)')
@@ -443,7 +442,7 @@ def main():
     trainos.add_argument('-q', dest='batchsteps', metavar='', type=int, nargs='*',
                         default=[25, 75, 100, 120], help='double batch size at epochs [25 75 150 300]')
     trainos.add_argument('-r', dest='lrate',  metavar='',type=float,
-                        default=1e-3, help='learning rate [0.001]')
+                        default=-1, help='learning rate [0.001]')
 
     # Clustering arguments
     clusto = parser.add_argument_group(title='Clustering options', description=None)
@@ -575,8 +574,8 @@ def main():
     if min(args.batchsteps, default=1) < 1:
         raise argparse.ArgumentTypeError('All batchsteps must be 1 or higher')
 
-    if args.lrate <= 0:
-        raise argparse.ArgumentTypeError('Learning rate must be positive')
+    if args.lrate == -1:
+        lrate = 0.075 * sqrt(args.batchsize)  if args.contrastive else 1e-3
 
     ###################### CHECK CLUSTERING OPTIONS ####################
     if args.minsize < 1:
@@ -620,7 +619,6 @@ def main():
             args.augdatashuffle,
             augmentation_data_dir,
             args.temperature,
-            args.l2norm,
             args.bamfiles,
             args.rpkm if rpkm_flag else r'padding$padding',
             args.jgi,
@@ -637,7 +635,7 @@ def main():
             alpha=args.alpha,
             beta=args.beta,
             dropout=args.dropout,
-            lrate=args.lrate,
+            lrate=lrate,
             batchsteps=args.batchsteps,
             windowsize=args.windowsize,
             minsuccesses=args.minsuccesses,
