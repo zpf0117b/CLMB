@@ -133,6 +133,7 @@ class AutomaticWeightedLoss(_nn.Module):
     def forward(self, *x):
         loss_sum = 0
         for i, loss in enumerate(x):
+            #print(self.params[i].retain_grad(), self.params[i])
             loss_sum += 0.5 / (self.params[i] ** 2) * loss + _torch.log(1 + self.params[i] ** 2)
         return loss_sum
 
@@ -397,8 +398,8 @@ class VAE(_nn.Module):
                                                     tnf_out2, mu2, logsigma2)
 
                 loss = awl(loss3,  0.01*(loss1+loss2))
-
-                loss.backward()
+                #loss = loss3
+                #loss3.backward()
                 optimizer.step()
                 print(loss1,loss2,loss3,file=logfile)
 
@@ -568,11 +569,12 @@ class VAE(_nn.Module):
             print('\tN samples:', nsamples, file=logfile, end='\n\n')
 
         # Train
+        module_list = _nn.ModuleList([self.encoderlayers, self.encodernorms, self.mu, self.logsigma, self.decoderlayers, self.decodernorms, self.outputlayer, self.dropoutlayer])
         # simclr
         if self.contrast:
             awl = AutomaticWeightedLoss(2)
-            optimizer = SGD([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 100}, {'params': awl.parameters(),'lr':lrate, 'weight_decay': 10}])
-
+            optimizer = lars.LARS([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
+            #optimizer = Adam(module_list.parameters(), lr=lrate)
             count = 0
             while count * count < nepochs:
                 count += 1
@@ -601,10 +603,12 @@ class VAE(_nn.Module):
                 #print(depthstensor.shape, aug_tensor1.shape, aug_tensor2.shape)
                 data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=hparams.batch_size, drop_last=True,
                             shuffle=True, num_workers=dataloader.num_workers,pin_memory=dataloader.pin_memory)
-                self.trainepoch(data_loader, epoch, lars.LARS(optimizer), batchsteps_set, logfile, hparams, awl)
+                self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
+                #for param in awl.parameters():
+                #     print('awl',param.retain_grad())
         # vamb
         else:
-            optimizer = Adam(self.parameters(), lr=lrate)
+            optimizer = Adam(module_list.parameters(), lr=lrate)
             for epoch in range(nepochs):
                 dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
 
@@ -658,6 +662,6 @@ class VAE(_nn.Module):
         pos = _torch.cat([pos, pos], dim=0)
 
         loss = -_torch.log(pos / (neg + eps)).mean()
-        # print(out,cov,sim,neg,row_sub,pos,loss)
+        print('out',out,cov,sim,neg,row_sub,pos)
 
         return loss
