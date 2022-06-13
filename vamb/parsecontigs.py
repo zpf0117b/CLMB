@@ -35,7 +35,7 @@ def _convert(raw, projected):
     projected.extend(projected_mat.ravel())
     raw.clear()
 
-def read_contigs(filehandle, minlength=100):
+def read_contigs(filehandle, minlength=100, k=4):
     """Parses a FASTA file open in binary reading mode.
 
     Input:
@@ -80,7 +80,7 @@ def read_contigs(filehandle, minlength=100):
 
     return tnfs_arr, contignames, lengths_arr
 
-def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_iteration=100, augmode=[-1,-1], augdatashuffle=False, usecuda=False):
+def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", backup_iteration=100, augmode=[-1,-1], augdatashuffle=False, usecuda=False):
     """Parses a FASTA file open in binary reading mode.
 
     Input:
@@ -97,8 +97,6 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
 
     if minlength < 4:
         raise ValueError('Minlength must be at least 4, not {}'.format(minlength))
-
-    k = 4
 
     norm = _vambtools.PushArray(_np.float32)
     gaussian = _vambtools.PushArray(_np.float32)
@@ -196,25 +194,25 @@ def read_contigs_augmentation(filehandle, minlength=100, store_dir="./", backup_
         for j2 in range(gaussian_count[i]):
             gaussian_save = gaussian_arr[:,j2,:]
             gaussian_save.shape = (-1, 4**k)
-            _np.savez(f"{store_dir}/pool{i}_gaussian_{j2}_index{index_list[index]}.npz", gaussian_save)
+            _np.savez(f"{store_dir}/pool{i}_k{k}_gaussian{j2}_index{index_list[index]}.npz", gaussian_save)
             index += 1
 
         for j2 in range(trans_count[i]):
             trans_save = trans_arr[:,j2,:]
             trans_save.shape = (-1, 4**k)
-            _np.savez(f"{store_dir}/pool{i}_trans_{j2}_index{index_list[index]}.npz", trans_save)
+            _np.savez(f"{store_dir}/pool{i}_k{k}_trans{j2}_index{index_list[index]}.npz", trans_save)
             index += 1
 
         for j2 in range(traver_count[i]):
             traver_save = traver_arr[:,j2,:]
             traver_save.shape = (-1, 4**k)
-            _np.savez(f"{store_dir}/pool{i}_traver_{j2}_index{index_list[index]}.npz", traver_save)
+            _np.savez(f"{store_dir}/pool{i}_k{k}_traver{j2}_index{index_list[index]}.npz", traver_save)
             index += 1
 
         for j2 in range(mutated_count[i]):
             mutated_save = mutated_arr[:,j2,:]
             mutated_save.shape = (-1, 4**k)
-            _np.savez(f"{store_dir}/pool{i}_mutated_{j2}_index{index_list[index]}.npz", mutated_save)
+            _np.savez(f"{store_dir}/pool{i}_k{k}_mutated{j2}_index{index_list[index]}.npz", mutated_save)
             index += 1
 
         gaussian.clear()

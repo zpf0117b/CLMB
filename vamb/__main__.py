@@ -36,7 +36,7 @@ def log(string, logfile, indent=0):
     print(('\t' * indent) + string, file=logfile)
     logfile.flush()
 
-def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength, logfile, nepochs, augdatashuffle, augmentation_store_dir, augmode, contrastive=True):
+def calc_tnf(outdir, fastapath, k, tnfpath, namespath, lengthspath, mincontiglength, logfile, nepochs, augdatashuffle, augmentation_store_dir, augmode, contrastive=True):
     begintime = time.time()
     log('\nLoading TNF', logfile, 0)
     log('Minimum sequence length: {}'.format(mincontiglength), logfile, 1)
@@ -72,12 +72,12 @@ def calc_tnf(outdir, fastapath, tnfpath, namespath, lengthspath, mincontiglength
         log('Loading data from FASTA file {}'.format(fastapath), logfile, 1)
         if not contrastive:
             with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
-                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength)
+                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs(tnffile, minlength=mincontiglength, k=k)
                 tnffile.close()
         else:
             os.system(f'mkdir -p {augmentation_store_dir}')
             with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
-                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, store_dir=augmentation_store_dir, backup_iteration=nepochs, augmode=augmode, augdatashuffle=augdatashuffle)
+                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, k=k, store_dir=augmentation_store_dir, backup_iteration=nepochs, augmode=augmode, augdatashuffle=augdatashuffle)
                 tnffile.close()
 
         vamb.vambtools.write_npz(os.path.join(outdir, 'tnf.npz'), tnfs)
@@ -145,7 +145,7 @@ def calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash, nco
     return rpkms
 
 from argparse import Namespace
-def trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmentationpath, temperature, nhiddens, nlatent, alpha, beta, dropout, cuda,
+def trainvae(outdir, rpkms, tnfs, k, contrastive, augmode, augdatashuffle, augmentationpath, temperature, nhiddens, nlatent, alpha, beta, dropout, cuda,
             batchsize, nepochs, lrate, batchsteps, logfile):
 
     begintime = time.time()
@@ -174,7 +174,7 @@ def trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmenta
     # clmb
     if contrastive:
         if True:
-            vae = vamb.encode.VAE(ntnf=int(tnfs.shape[1]), nsamples=nsamples, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
+            vae = vamb.encode.VAE(ntnf=int(tnfs.shape[1]), nsamples=nsamples, k=k, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
             modelpath = os.path.join(outdir.replace('results','data'), f"{aug_all_method[hparams.aug_mode[0]]+'_'+aug_all_method[hparams.aug_mode[1]]}.pt")
             vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams, augmentationpath=augmentationpath, augdatashuffle=augdatashuffle)
         else:
@@ -182,7 +182,7 @@ def trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmenta
             vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
             vae.to(('cuda' if cuda else 'cpu'))
     else:
-        vae = vamb.encode.VAE(nsamples, nhiddens=nhiddens, nlatent=nlatent, alpha=alpha, beta=beta, dropout=dropout, cuda=cuda)
+        vae = vamb.encode.VAE(ntnf=int(tnfs.shape[1]), nsamples=nsamples, k=k, nhiddens=nhiddens, nlatent=nlatent, alpha=alpha, beta=beta, dropout=dropout, cuda=cuda)
         modelpath = os.path.join(outdir, 'model.pt')
         vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps, logfile=logfile, modelfile=modelpath)
     latent = vae.encode(dataloader)
@@ -298,7 +298,7 @@ def write_fasta(outdir, clusterspath, fastapath, contignames, contiglengths, min
     elapsed = round(time.time() - begintime, 2)
     log('Wrote FASTA in {} seconds'.format(elapsed), logfile, 1)
 
-def run(outdir, fastapath, tnfpath, namespath, lengthspath, 
+def run(outdir, fastapath, k, tnfpath, namespath, lengthspath, 
         contrastive, augmode, augdatashuffle, augmentationpath, temperature,
         bampaths, rpkmpath, jgipath,
         mincontiglength, norefcheck, minalignscore, minid, subprocesses, nhiddens, nlatent,
@@ -313,7 +313,7 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath,
     # Get TNFs, save as npz
     if contrastive and augmentationpath is None:
         augmentationpath = os.path.join(outdir, 'augmentation')
-    tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, tnfpath, namespath,
+    tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, k, tnfpath, namespath,
                                             lengthspath, mincontiglength, logfile, nepochs, augdatashuffle, augmentationpath, augmode, contrastive)
 
     # if not (os.path.exists(augmentationpath) and len(os.listdir(augmentationpath)) >= nepochs * 4):
@@ -334,7 +334,7 @@ def run(outdir, fastapath, tnfpath, namespath, lengthspath,
     print(f'RPKM completed at {round(time.time(), 2)}')
 
     # Train, save model
-    mask, latent = trainvae(outdir, rpkms, tnfs, contrastive, augmode, augdatashuffle, augmentationpath, temperature, nhiddens, nlatent, alpha, beta,
+    mask, latent = trainvae(outdir, rpkms, tnfs, k, contrastive, augmode, augdatashuffle, augmentationpath, temperature, nhiddens, nlatent, alpha, beta,
                             dropout, cuda, batchsize, nepochs, lrate, batchsteps, logfile)
 
     del tnfs, rpkms
@@ -381,6 +381,7 @@ def main():
     # TNF arguments
     tnfos = parser.add_argument_group(title='TNF input (either fasta or all .npz files required)')
     tnfos.add_argument('--fasta', metavar='', help='path to fasta file')
+    tnfos.add_argument('-k', dest='k', metavar='', type=int, default=4, help='k for kmer calculation')
     tnfos.add_argument('--tnfs', metavar='', help='path to .npz of TNF')
     tnfos.add_argument('--names', metavar='', help='path to .npz of names of sequences')
     tnfos.add_argument('--lengths', metavar='', help='path to .npz of seq lengths')
@@ -611,6 +612,7 @@ def main():
     with open(logpath, 'w') as logfile:
         run(args.outdir,
             args.fasta,
+            args.k,
             args.tnfs,
             args.names,
             args.lengths,

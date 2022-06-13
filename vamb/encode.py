@@ -23,6 +23,7 @@ _torch.manual_seed(42)
 #_torch.seed()
 
 import math
+import pickle
 from argparse import Namespace
 
 from torch import nn as _nn
@@ -155,7 +156,7 @@ class VAE(_nn.Module):
     0.99 and 0.0, respectively
     """
 
-    def __init__(self, ntnf, nsamples, nhiddens=None, nlatent=32, alpha=None,
+    def __init__(self, ntnf, nsamples, k=4, nhiddens=None, nlatent=32, alpha=None,
                  beta=200, dropout=0.2, cuda=False, c=False):
         if nlatent < 1:
             raise ValueError('Minimum 1 latent neuron, not {}'.format(nlatent))
@@ -191,6 +192,7 @@ class VAE(_nn.Module):
         self.usecuda = cuda
         self.nsamples = nsamples
         self.ntnf = ntnf
+        self.k = k
         self.alpha = alpha
         self.beta = beta
         self.nhiddens = nhiddens
@@ -225,6 +227,12 @@ class VAE(_nn.Module):
         self.relu = _nn.LeakyReLU()
         self.softplus = _nn.Softplus()
         self.dropoutlayer = _nn.Dropout(p=self.dropout)
+
+        self.module_list = _nn.ModuleList([self.encoderlayers, self.encodernorms, self.mu, self.logsigma, self.decoderlayers, self.decodernorms, self.outputlayer, self.dropoutlayer])
+
+        # Hidden layer monitor
+        self.module_list.register_forward_hook(farward_hook)
+        self.module_list.register_backward_hook(backward_hook)
 
         if cuda:
             self.cuda()
@@ -312,7 +320,7 @@ class VAE(_nn.Module):
         kld_weight = 1 / (self.nlatent * self.beta)
         loss = ce * ce_weight + sse * sse_weight + kld * kld_weight
 
-        return loss, ce, sse, kld
+        return loss, ce*ce_weight, sse*sse_weight, kld*kld_weight
 
     def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile, hparams, awl=None):
         self.train()
@@ -397,11 +405,12 @@ class VAE(_nn.Module):
                 loss2, ce2, sse2, kld2 = self.calc_loss(depths, depths_out2, aug_arr2,
                                                     tnf_out2, mu2, logsigma2)
 
-                loss = awl(loss3,  0.01*(loss1+loss2))
+                loss = awl(loss3, (ce1+ce2), (sse1+sse2), (kld1+kld2))
                 #loss = loss3
-                #loss3.backward()
+                loss.backward()
                 optimizer.step()
                 print(loss1,loss2,loss3,file=logfile)
+                print('grad', fmap_block, grad_block, file=logfile)
 
                 epoch_loss += loss.data.item()
                 epoch_kldloss += (kld1+kld2).data.item()
@@ -569,25 +578,24 @@ class VAE(_nn.Module):
             print('\tN samples:', nsamples, file=logfile, end='\n\n')
 
         # Train
-        module_list = _nn.ModuleList([self.encoderlayers, self.encodernorms, self.mu, self.logsigma, self.decoderlayers, self.decodernorms, self.outputlayer, self.dropoutlayer])
         # simclr
         if self.contrast:
-            awl = AutomaticWeightedLoss(2)
-            optimizer = lars.LARS([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
-            #optimizer = Adam(module_list.parameters(), lr=lrate)
+            awl = AutomaticWeightedLoss(4)
+            optimizer = lars.LARS([{'params':self.module_list.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
+            #optimizer = Adam(self.module_list.parameters(), lr=lrate)
             count = 0
             while count * count < nepochs:
                 count += 1
             for epoch in range(nepochs):
                 depthstensor, tnftensor = dataloader.dataset.tensors
-                aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool0*index{epoch//count}*'), glob.glob(rf'{augmentationpath+os.sep}pool1*index{epoch%count}*')
+                aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool0*k{self.k}*index{epoch//count}*'), glob.glob(rf'{augmentationpath+os.sep}pool1*k{self.k}*index{epoch%count}*')
                 if augdatashuffle:
                     shuffle_file = random.randrange(0, 3 * count - 1)
                     if shuffle_file > 2 * count -1:
-                        aug_archive1_file = glob.glob(rf'{augmentationpath+os.sep}pool2*index{shuffle_file - 2 * count}*')
+                        aug_archive1_file = glob.glob(rf'{augmentationpath+os.sep}pool2*k{self.k}*index{shuffle_file - 2 * count}*')
                     shuffle_file2 = random.randrange(0, 3 * count - 1)
                     if shuffle_file2 > 2 * count -1:
-                        aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool2*index{shuffle_file2 - 2 * count}*')
+                        aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool2*k{self.k}*index{shuffle_file2 - 2 * count}*')
                 aug_archive1, aug_archive2 = _np.load(aug_archive1_file[0]), _np.load(aug_archive2_file[0])
                 # if hparams.aug_mode == (-1, -1):
                 #     # Sample the augmentation methods without replacement. We use the sample amount to determine the frequency of methods.  
@@ -608,7 +616,7 @@ class VAE(_nn.Module):
                 #     print('awl',param.retain_grad())
         # vamb
         else:
-            optimizer = Adam(module_list.parameters(), lr=lrate)
+            optimizer = Adam(self.module_list.parameters(), lr=lrate)
             for epoch in range(nepochs):
                 dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
 
@@ -665,3 +673,16 @@ class VAE(_nn.Module):
         print('out',out,cov,sim,neg,row_sub,pos)
 
         return loss
+
+
+# Hidden layer monitor
+fmap_block = dict()  # feature map container
+grad_block = dict()  # gradient container
+def backward_hook(module, grad_in, grad_out):
+    grad_block['grad_in'] = grad_in
+    grad_block['grad_out'] = grad_out
+
+
+def farward_hook(module, inp, outp):
+    fmap_block['input'] = inp
+    fmap_block['output'] = outp
