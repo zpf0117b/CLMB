@@ -231,9 +231,23 @@ class VAE(_nn.Module):
         self.module_list = _nn.ModuleList([self.encoderlayers, self.encodernorms, self.mu, self.logsigma, self.decoderlayers, self.decodernorms, self.outputlayer, self.dropoutlayer])
 
         # Hidden layer monitor
-        self.module_list.register_forward_hook(farward_hook)
-        self.module_list.register_backward_hook(backward_hook)
-
+        self.encoderlayers.register_forward_hook(forward_hook)
+        self.encodernorms.register_forward_hook(forward_hook)
+        self.mu.register_forward_hook(forward_hook)
+        self.logsigma.register_forward_hook(forward_hook)
+        self.decoderlayers.register_forward_hook(forward_hook)
+        self.decodernorms.register_forward_hook(forward_hook)
+        self.outputlayer.register_forward_hook(forward_hook)
+        self.dropoutlayer.register_forward_hook(forward_hook)
+        self.encodernorms.register_backward_hook(backward_hook)
+        self.encoderlayers.register_backward_hook(backward_hook)
+        self.encodernorms.register_backward_hook(backward_hook)
+        self.mu.register_backward_hook(backward_hook)
+        self.logsigma.register_backward_hook(backward_hook)
+        self.decoderlayers.register_backward_hook(backward_hook)
+        self.decodernorms.register_backward_hook(backward_hook)
+        self.outputlayer.register_backward_hook(backward_hook)
+        self.dropoutlayer.register_backward_hook(backward_hook)
         if cuda:
             self.cuda()
 
@@ -405,12 +419,12 @@ class VAE(_nn.Module):
                 loss2, ce2, sse2, kld2 = self.calc_loss(depths, depths_out2, aug_arr2,
                                                     tnf_out2, mu2, logsigma2)
 
-                loss = awl(loss3, (ce1+ce2), (sse1+sse2), (kld1+kld2))
+                # loss = awl(loss3, (ce1+ce2), (sse1+sse2), (kld1+kld2))
+                loss = awl(loss3, (ce1+ce2), (sse1+sse2))
                 #loss = loss3
                 loss.backward()
                 optimizer.step()
                 print(loss1,loss2,loss3,file=logfile)
-                print('grad', fmap_block, grad_block, file=logfile)
 
                 epoch_loss += loss.data.item()
                 epoch_kldloss += (kld1+kld2).data.item()
@@ -580,7 +594,8 @@ class VAE(_nn.Module):
         # Train
         # simclr
         if self.contrast:
-            awl = AutomaticWeightedLoss(4)
+            awl = AutomaticWeightedLoss(3)
+            print(self.module_list.parameters())
             optimizer = lars.LARS([{'params':self.module_list.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
             #optimizer = Adam(self.module_list.parameters(), lr=lrate)
             count = 0
@@ -608,12 +623,16 @@ class VAE(_nn.Module):
                 _vambtools.zscore(aug_arr1, axis=0, inplace=True)
                 _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                 aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
-                #print(depthstensor.shape, aug_tensor1.shape, aug_tensor2.shape)
+                print(_torch.sum(_torch.sub(aug_tensor1, aug_tensor2)))
                 data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=hparams.batch_size, drop_last=True,
                             shuffle=True, num_workers=dataloader.num_workers,pin_memory=dataloader.pin_memory)
                 self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
                 #for param in awl.parameters():
                 #     print('awl',param.retain_grad())
+            for i in range(len(fmap_block)):
+                print('fmap', fmap_block[i], file=logfile, end='\t\t')
+            for i in range(len(grad_block)):
+                print('grad', grad_block[i], file=logfile, end='\t\t')
         # vamb
         else:
             optimizer = Adam(self.module_list.parameters(), lr=lrate)
@@ -676,13 +695,13 @@ class VAE(_nn.Module):
 
 
 # Hidden layer monitor
-fmap_block = dict()  # feature map container
-grad_block = dict()  # gradient container
+fmap_block = list()  # feature map container
+grad_block = list()  # gradient container
 def backward_hook(module, grad_in, grad_out):
-    grad_block['grad_in'] = grad_in
-    grad_block['grad_out'] = grad_out
+    grad_block.append(('grad_in', grad_in))
+    grad_block.append(('grad_out', grad_out))
 
 
-def farward_hook(module, inp, outp):
-    fmap_block['input'] = inp
-    fmap_block['output'] = outp
+def forward_hook(module, inp, outp):
+    fmap_block.append(('input', inp))
+    fmap_block.append(('output', outp))

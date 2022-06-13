@@ -10,7 +10,7 @@ def add_noise(x_train):
     n_features = x_train.shape[0]
     index = (np.random.random(n_features) < 0.25).astype('float32')
     mean = np.mean(x_train)
-    noise = np.random.normal(-0.005*mean, 0.005*mean, n_features)
+    noise = np.random.normal(-0.05*abs(mean) if abs(mean) < 1e-4 else -0.05, 0.05*abs(mean) if abs(mean) < 1e-4 else 0.05, n_features)
     gaussian_train = x_train + noise * index
     return gaussian_train
 
