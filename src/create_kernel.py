@@ -42,29 +42,29 @@ def all_kmers(k):
     for i in itertools.product("ACGT", repeat=k):
         yield(''.join(i))
 
-def create_projection_kernel():
-    indexof = {kmer:i for i,kmer in enumerate(all_kmers(4))}
+def create_projection_kernel(k=4):
+    indexof = {kmer:i for i,kmer in enumerate(all_kmers(k))}
     linear_equations = list()
 
     # Constraint one: Frequencies sum to one (or in this scaled case, zero)
-    linear_equations.append([1]*256)
+    linear_equations.append([1]*(4**k))
 
     # Constaint two: Frequencies are same as that of reverse complement
-    for kmer in all_kmers(4):
+    for kmer in all_kmers(k):
         revcomp = reverse_complement(kmer)
 
         # Only look at canonical kmers - this makes no difference
         if kmer >= revcomp:
             continue
 
-        line = [0]*256
+        line = [0]*(4**k)
         line[indexof[kmer]] = 1
         line[indexof[revcomp]] = -1
         linear_equations.append(line)
 
     # Constraint three: sum(ABCx) = sum(xABC)
-    for trimer in all_kmers(3):
-        line = [0]*256
+    for trimer in all_kmers(k-1):
+        line = [0]*(4**k)
         for suffix in "ACGT":
             line[indexof[trimer + suffix]] += 1
         for prefix in "ACGT":
@@ -73,25 +73,26 @@ def create_projection_kernel():
 
     linear_equations = np.array(linear_equations)
     kernel = null_space(linear_equations).astype(np.float32)
-    assert kernel.shape == (256, 103)
+    # assert kernel.shape == ((4**k), -1)
     return kernel
 
-def create_rc_kernel():
-    indexof = {kmer:i for i,kmer in enumerate(all_kmers(4))}
-    rc_matrix = np.zeros((256, 256), dtype=np.float32)
-    for col, kmer in enumerate(all_kmers(4)):
+def create_rc_kernel(k=4):
+    indexof = {kmer:i for i,kmer in enumerate(all_kmers(k))}
+    rc_matrix = np.zeros((4**k, 4**k), dtype=np.float32)
+    for col, kmer in enumerate(all_kmers(k)):
         revcomp = reverse_complement(kmer)
         rc_matrix[indexof[kmer], col] += 0.5
         rc_matrix[indexof[revcomp], col] += 0.5
 
     return rc_matrix
 
-def create_dual_kernel():
-    return np.dot(create_rc_kernel(), create_projection_kernel())
+def create_dual_kernel(k=4):
+    return np.dot(create_rc_kernel(k), create_projection_kernel(k))
 
-dual_kernel = create_dual_kernel()
 
 # Prevent overwriting kernel when running tests
 if __name__ == "__main__":
-    path = join(dirname(dirname(abspath(__file__))), "vamb", "kernel.npz")
+    k=4
+    path = join(dirname(dirname(abspath(__file__))), "vamb/kernel", f"kernel{k}.npz")
+    dual_kernel = create_dual_kernel(k)
     np.savez_compressed(path, dual_kernel)

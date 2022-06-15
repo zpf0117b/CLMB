@@ -228,26 +228,12 @@ class VAE(_nn.Module):
         self.softplus = _nn.Softplus()
         self.dropoutlayer = _nn.Dropout(p=self.dropout)
 
-        self.module_list = _nn.ModuleList([self.encoderlayers, self.encodernorms, self.mu, self.logsigma, self.decoderlayers, self.decodernorms, self.outputlayer, self.dropoutlayer])
-
         # Hidden layer monitor
-        #self.encoderlayers.register_forward_hook(forward_hook)
-        #self.encodernorms.register_forward_hook(forward_hook)
-        #self.mu.register_forward_hook(forward_hook)
-        #self.logsigma.register_forward_hook(forward_hook)
-        #self.decoderlayers.register_forward_hook(forward_hook)
-        #self.decodernorms.register_forward_hook(forward_hook)
-        #self.outputlayer.register_forward_hook(forward_hook)
-        #self.dropoutlayer.register_forward_hook(forward_hook)
-        #self.encodernorms.register_backward_hook(backward_hook)
-        #self.encoderlayers.register_backward_hook(backward_hook)
-        #self.encodernorms.register_backward_hook(backward_hook)
-        #self.mu.register_backward_hook(backward_hook)
-        #self.logsigma.register_backward_hook(backward_hook)
-        #self.decoderlayers.register_backward_hook(backward_hook)
-        #self.decodernorms.register_backward_hook(backward_hook)
-        self.outputlayer.register_backward_hook(backward_hook)
-        #self.dropoutlayer.register_backward_hook(backward_hook)
+        # self.register_full_backward_hook(backward_hook)
+        # self.register_forward_hook(forward_hook)
+        for param in self.parameters():
+            print(type(param), param.size())
+
         if cuda:
             self.cuda()
 
@@ -420,7 +406,7 @@ class VAE(_nn.Module):
                                                     tnf_out2, mu2, logsigma2)
 
                 # loss = awl(loss3, (ce1+ce2), (sse1+sse2), (kld1+kld2))
-                loss = awl(loss3, (ce1+ce2), (sse1+sse2))
+                loss = awl(loss3, loss1+loss2)
                 #loss = loss3
                 loss.backward()
                 optimizer.step()
@@ -596,10 +582,12 @@ class VAE(_nn.Module):
         # Train
         # simclr
         if self.contrast:
-            awl = AutomaticWeightedLoss(3)
-            print(self.module_list.parameters())
-            #optimizer = lars.LARS([{'params':self.module_list.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
-            optimizer = Adam([{'params':self.module_list.parameters(), 'lr':lrate, 'weight_decay': 0}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
+            awl = AutomaticWeightedLoss(2)
+            # print(self.module_list.parameters())
+            for param in awl.parameters():
+                print(type(param), param.size())
+            #optimizer = lars.LARS([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
+            optimizer = Adam([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
             count = 0
             while count * count < nepochs:
                 count += 1
@@ -637,7 +625,7 @@ class VAE(_nn.Module):
        #         print('grad', grad_block[i], file=logfile, end='\t\t')
         # vamb
         else:
-            optimizer = Adam(self.module_list.parameters(), lr=lrate)
+            optimizer = Adam(self.parameters(), lr=lrate)
             for epoch in range(nepochs):
                 dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
 
