@@ -394,7 +394,7 @@ def main():
     contrastiveos.add_argument('--augdatashuffle', action='store_true', 
             help='Whether to shuffle the training augmentation data (True: For each training, random select the augmentation data from the augmentation dir pool.)')
     contrastiveos.add_argument('--augmentation', metavar='', help='path to augmentation dir')
-    contrastiveos.add_argument('--temperature', metavar='', default=0.1, help='The temperature for the normalized temperature-scaled cross entropy loss')
+    contrastiveos.add_argument('--temperature', metavar='', default=0.1,type=float, help='The temperature for the normalized temperature-scaled cross entropy loss')
 
     # RPKM arguments
     rpkmos = parser.add_argument_group(title='RPKM input (either BAMs, JGI or .npz required)')
@@ -577,7 +577,8 @@ def main():
 
     if args.lrate == -1:
         lrate = 0.075 * sqrt(args.batchsize)  if args.contrastive else 1e-3
-
+    else:
+        lrate = args.lrate
     ###################### CHECK CLUSTERING OPTIONS ####################
     if args.minsize < 1:
         raise argparse.ArgumentTypeError('Minimum cluster size must be at least 0')

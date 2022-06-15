@@ -141,14 +141,15 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
             t = entry.kmercounts(k)
             t_norm = t / _np.sum(t)
             _np.add(t_norm, - 1/(2*4**k), out=t_norm)
-            #print(i,pools-1)
+            print(t_norm)
+            print(t)
             if i == 0:
                 norm.extend(t_norm)
 
             for j in range(gaussian_count[i]):
                 t_gaussian = mimics.add_noise(t_norm)
                 gaussian.extend(t_gaussian)
-                #print(sum(t_gaussian),end=' ')
+                print('gaussian',_np.sum(t_gaussian-t_norm))
 
             mutations = mimics.transition(entry.sequence, 1 - 0.021, trans_count[i])
             for j in range(trans_count[i]):
@@ -156,7 +157,7 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
                 t_trans = counts_kmer / _np.sum(counts_kmer)
                 _np.add(t_trans, - 1/(2*4**k), out=t_trans)
                 trans.extend(t_trans)
-                #print(sum(t_trans),end=' ')
+                print('trans',_np.sum(t_trans-t_norm),_np.sum(counts_kmer-t))
 
             mutations = mimics.transversion(entry.sequence, 1 - 0.0105, traver_count[i])
             for j in range(traver_count[i]):
@@ -164,7 +165,7 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
                 t_traver = counts_kmer / _np.sum(counts_kmer)
                 _np.add(t_traver, - 1/(2*4**k), out=t_traver)
                 traver.extend(t_traver)
-                #print(sum(t_traver),end=' ')
+                print('traver',_np.sum(t_traver-t_norm),_np.sum(counts_kmer-t))
 
             mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007, mutated_count[i])
             for j in range(mutated_count[i]):
@@ -172,7 +173,7 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
                 t_mutated = counts_kmer / _np.sum(counts_kmer)
                 _np.add(t_mutated, - 1/(2*4**k), out=t_mutated)
                 mutated.extend(t_mutated)
-                #print(sum(t_mutated),end=' ')
+                print('mutated',sum(t_mutated-t_norm),_np.sum(counts_kmer-t))
 
             if i == 0:
                 lengths.append(len(entry))

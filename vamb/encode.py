@@ -231,23 +231,23 @@ class VAE(_nn.Module):
         self.module_list = _nn.ModuleList([self.encoderlayers, self.encodernorms, self.mu, self.logsigma, self.decoderlayers, self.decodernorms, self.outputlayer, self.dropoutlayer])
 
         # Hidden layer monitor
-        self.encoderlayers.register_forward_hook(forward_hook)
-        self.encodernorms.register_forward_hook(forward_hook)
-        self.mu.register_forward_hook(forward_hook)
-        self.logsigma.register_forward_hook(forward_hook)
-        self.decoderlayers.register_forward_hook(forward_hook)
-        self.decodernorms.register_forward_hook(forward_hook)
-        self.outputlayer.register_forward_hook(forward_hook)
-        self.dropoutlayer.register_forward_hook(forward_hook)
-        self.encodernorms.register_backward_hook(backward_hook)
-        self.encoderlayers.register_backward_hook(backward_hook)
-        self.encodernorms.register_backward_hook(backward_hook)
-        self.mu.register_backward_hook(backward_hook)
-        self.logsigma.register_backward_hook(backward_hook)
-        self.decoderlayers.register_backward_hook(backward_hook)
-        self.decodernorms.register_backward_hook(backward_hook)
+        #self.encoderlayers.register_forward_hook(forward_hook)
+        #self.encodernorms.register_forward_hook(forward_hook)
+        #self.mu.register_forward_hook(forward_hook)
+        #self.logsigma.register_forward_hook(forward_hook)
+        #self.decoderlayers.register_forward_hook(forward_hook)
+        #self.decodernorms.register_forward_hook(forward_hook)
+        #self.outputlayer.register_forward_hook(forward_hook)
+        #self.dropoutlayer.register_forward_hook(forward_hook)
+        #self.encodernorms.register_backward_hook(backward_hook)
+        #self.encoderlayers.register_backward_hook(backward_hook)
+        #self.encodernorms.register_backward_hook(backward_hook)
+        #self.mu.register_backward_hook(backward_hook)
+        #self.logsigma.register_backward_hook(backward_hook)
+        #self.decoderlayers.register_backward_hook(backward_hook)
+        #self.decodernorms.register_backward_hook(backward_hook)
         self.outputlayer.register_backward_hook(backward_hook)
-        self.dropoutlayer.register_backward_hook(backward_hook)
+        #self.dropoutlayer.register_backward_hook(backward_hook)
         if cuda:
             self.cuda()
 
@@ -393,7 +393,7 @@ class VAE(_nn.Module):
             epoch_kldloss = 0
             epoch_cesseloss = 0
             epoch_clloss = 0
-
+            grad_block.clear()
             for depths, aug_arr1, aug_arr2 in data_loader:
                 # print(_torch.sum(tnf_in1),tnf_in1.shape, file=logfile)
                 # depths_in1, tnf_in1, depths_in2, tnf_in2 = depths_in1, tnf_in1, depths_in2, tnf_in2
@@ -430,6 +430,8 @@ class VAE(_nn.Module):
                 epoch_kldloss += (kld1+kld2).data.item()
                 epoch_cesseloss += (ce1+ce2).data.item()
                 epoch_clloss += (sse1+sse2).data.item()
+            for i in range(len(grad_block)):
+                print('grad', grad_block[i], file=logfile, end='\t\t')
 
             if logfile is not None:
                 print('\tEpoch: {}\tLoss: {:.6f}\tCL: {:.7f}\tCE SSE: {:.6f}\tKLD: {:.4f}\tBatchsize: {}'.format(
@@ -596,8 +598,8 @@ class VAE(_nn.Module):
         if self.contrast:
             awl = AutomaticWeightedLoss(3)
             print(self.module_list.parameters())
-            optimizer = lars.LARS([{'params':self.module_list.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
-            #optimizer = Adam(self.module_list.parameters(), lr=lrate)
+            #optimizer = lars.LARS([{'params':self.module_list.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
+            optimizer = Adam([{'params':self.module_list.parameters(), 'lr':lrate, 'weight_decay': 0}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
             count = 0
             while count * count < nepochs:
                 count += 1
@@ -623,16 +625,16 @@ class VAE(_nn.Module):
                 _vambtools.zscore(aug_arr1, axis=0, inplace=True)
                 _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                 aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
-                print(_torch.sum(_torch.sub(aug_tensor1, aug_tensor2)))
+                print('difference',_torch.sum(_torch.sub(aug_tensor1, aug_tensor2), axis=1))
                 data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=hparams.batch_size, drop_last=True,
-                            shuffle=True, num_workers=dataloader.num_workers,pin_memory=dataloader.pin_memory)
+                            shuffle=True, num_workers=0,pin_memory=False)
                 self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
                 #for param in awl.parameters():
                 #     print('awl',param.retain_grad())
-            for i in range(len(fmap_block)):
-                print('fmap', fmap_block[i], file=logfile, end='\t\t')
-            for i in range(len(grad_block)):
-                print('grad', grad_block[i], file=logfile, end='\t\t')
+       #     for i in range(len(fmap_block)):
+       #         print('fmap', fmap_block[i], file=logfile, end='\t\t')
+       #     for i in range(len(grad_block)):
+       #         print('grad', grad_block[i], file=logfile, end='\t\t')
         # vamb
         else:
             optimizer = Adam(self.module_list.parameters(), lr=lrate)
@@ -689,7 +691,7 @@ class VAE(_nn.Module):
         pos = _torch.cat([pos, pos], dim=0)
 
         loss = -_torch.log(pos / (neg + eps)).mean()
-        print('out',out,cov,sim,neg,row_sub,pos)
+        #print('out',out,cov,sim,neg,row_sub,pos)
 
         return loss
 
