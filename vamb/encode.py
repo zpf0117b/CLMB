@@ -230,10 +230,11 @@ class VAE(_nn.Module):
         self.dropoutlayer = _nn.Dropout(p=self.dropout)
 
         # Hidden layer monitor
-        #self.register_full_backward_hook(backward_hook)
+        # gradient monitor using hook (require more memory and time cost)
+        # self.register_full_backward_hook(backward_hook)
         # self.register_forward_hook(forward_hook)
-        for param in self.parameters():
-            print('self',type(param), param.size())
+        # for param in self.parameters():
+        #     print('self',type(param), param.size())
 
         if cuda:
             self.cuda()
@@ -374,43 +375,45 @@ class VAE(_nn.Module):
             epoch_kldloss = 0
             epoch_cesseloss = 0
             epoch_clloss = 0
-            grad_block.clear()
-            for depths, aug_arr1, aug_arr2 in data_loader:
+            # grad_block.clear()
+            for depths, tnf_in, tnf_aug1, tnf_aug2 in data_loader:
                 # print(_torch.sum(tnf_in1),tnf_in1.shape, file=logfile)
-                # depths_in1, tnf_in1, depths_in2, tnf_in2 = depths_in1, tnf_in1, depths_in2, tnf_in2
                 # depths_in1, tnf_in1, depths_in2, tnf_in2 = depths_in1[0], tnf_in1[0], depths_in2[0], tnf_in2[0]
                 depths.requires_grad = True
-                aug_arr1.requires_grad = True
-                aug_arr2.requires_grad = True
+                tnf_in.requires_grad = True
+                tnf_aug1.requires_grad = True
+                tnf_aug2.requires_grad = True
 
                 if self.usecuda:
                     depths = depths.cuda()
-                    aug_arr1 = aug_arr1.cuda()
-                    aug_arr2 = aug_arr2.cuda()
+                    tnf_in = tnf_in.cuda()
+                    tnf_aug1 = tnf_aug1.cuda()
+                    tnf_aug2 = tnf_aug2.cuda()
 
                 optimizer.zero_grad()
 
-                depths_out1, tnf_out1, mu1, logsigma1 = self(depths, aug_arr1)
-                depths_out2, tnf_out2, mu2, logsigma2 = self(depths, aug_arr2)
+                depths_out, tnf_out, mu, logsigma = self(depths, tnf_in)
+                depths_out1, tnf_out_aug1, mu1, logsigma1 = self(depths, tnf_aug1)
+                depths_out2, tnf_out_aug2, mu2, logsigma2 = self(depths, tnf_aug2)
 
                 #loss3 = self.nt_xent_loss(_torch.cat((depths_out1, tnf_out1), 1), _torch.cat((depths_out2, tnf_out2), 1), temperature=hparams.temperature)
-                loss3 = self.nt_xent_loss(mu1, mu2, temperature=hparams.temperature)
-                loss1, ce1, sse1, kld1 = self.calc_loss(depths, depths_out1, aug_arr1,
-                                                    tnf_out1, mu1, logsigma1)
-                loss2, ce2, sse2, kld2 = self.calc_loss(depths, depths_out2, aug_arr2,
-                                                    tnf_out2, mu2, logsigma2)
+                loss_contrast1 = self.nt_xent_loss(tnf_out_aug1, tnf_out_aug2, temperature=hparams.temperature)
+                loss_contrast2 = self.nt_xent_loss(tnf_out_aug2, tnf_out, temperature=hparams.temperature)
+                loss_contrast3 = self.nt_xent_loss(tnf_out, tnf_out_aug1, temperature=hparams.temperature)
+                loss1, ce1, sse1, kld1 = self.calc_loss(depths, depths_out, tnf_in, tnf_out, mu, logsigma)
 
-                # loss = awl(loss3, (ce1+ce2), (sse1+sse2), (kld1+kld2))
-                loss = awl(50000*loss3, 1000*(loss1+loss2))
-                #loss = loss3
+                # Add weight to avoid gradient disappearance
+                loss = awl(100*loss_contrast1, 100*loss_contrast2, 100*loss_contrast3) + 10000*loss1
                 loss.backward()
                 optimizer.step()
-                print('loss',loss1,loss2,loss3,file=logfile)
+                print('loss',loss1,loss_contrast1,loss_contrast2,loss_contrast3,file=logfile)
 
                 epoch_loss += loss.data.item()
-                epoch_kldloss += (kld1+kld2).data.item()
-                epoch_cesseloss += (ce1+ce2).data.item()
-                epoch_clloss += (sse1+sse2).data.item()
+                epoch_kldloss += (kld1).data.item()
+                epoch_cesseloss += (ce1).data.item()
+                epoch_clloss += (sse1).data.item()
+
+        # Gradient monitor using hook (require more memory and time cost)
         #    for i in range(len(grad_block)):
         #        print('grad', grad_block[i], file=logfile, end='\t\t')
 
@@ -555,7 +558,8 @@ class VAE(_nn.Module):
             batchsteps_set = set(batchsteps)
 
         # Get number of features
-        ncontigs, nsamples = dataloader.dataset.tensors[0].shape
+        depthstensor, tnftensor = dataloader.dataset.tensors
+        ncontigs, nsamples = depthstensor.shape
 
         if logfile is not None:
             print('\tNetwork properties:', file=logfile)
@@ -577,36 +581,24 @@ class VAE(_nn.Module):
         # Train
         # simclr
         if self.contrast:
-            optimizer = Adam([{'params':self.parameters(), 'lr':lrate}])
-#            optimizer.add_param_group({'params':self.parameters(), 'lr':lrate})
+            # Optimizer setting
+            awl = AutomaticWeightedLoss(3)
+            optimizer = Adam([{'params':self.parameters(), 'lr':lrate}, {'params': awl.parameters(),'lr':0.001, 'weight_decay': 0}])
+            # optimizer.add_param_group({'params':self.parameters(), 'lr':lrate})
+            # for param in awl.parameters():
+            #     print('awl',type(param), param.size())
+            # Other optimizer options (nor complemented)
+            # optimizer = lars.LARS([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
+            # optimizer.add_param_group({'params': awl.parameters(),'lr':0.1, 'weight_decay': 0})
+            # print('optimizer',optimizer.param_groups)
 
-            for epoch in range(batchsteps[-1]):
-                if epoch in batchsteps:
-                    dataloader = _DataLoader(dataset=dataloader.dataset,
-                                        batch_size=dataloader.batch_size * 2,
-                                        shuffle=True,
-                                        drop_last=False,
-                                        num_workers=dataloader.num_workers,
-                                        pin_memory=dataloader.pin_memory)
-                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
-
-            awl = AutomaticWeightedLoss(2)
-            # print(self.module_list.parameters())
-            for param in awl.parameters():
-                print('awl',type(param), param.size())
-            #optimizer = lars.LARS([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
-            optimizer.add_param_group({'params': awl.parameters(),'lr':10, 'weight_decay': 0})
-            for param_group in optimizer.param_groups:
-                param_group['lr'] *= 0.01
-            print('optimizer',optimizer.param_groups)
-            #optimizer = Adam([{'params':self.parameters(), 'lr':0.00001, 'weight_decay': 0}, {'params': awl.parameters(),'lr':0.001, 'weight_decay': 0}])
-            #optimizer2 = Adam(self.parameters(), lr=lrate)
+            # Read augmentation data from indexed files
             count = 0
             while count * count < nepochs:
                 count += 1
-            for epoch in range(batchsteps[-1], nepochs):
-                depthstensor, tnftensor = dataloader.dataset.tensors
+            for epoch in range(nepochs):
                 aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool0*k{self.k}*index{epoch//count}*'), glob.glob(rf'{augmentationpath+os.sep}pool1*k{self.k}*index{epoch%count}*')
+                # Read augmentation data from shuffled-indexed files
                 if augdatashuffle:
                     shuffle_file = random.randrange(0, 3 * count - 1)
                     if shuffle_file > 2 * count -1:
@@ -615,39 +607,44 @@ class VAE(_nn.Module):
                     if shuffle_file2 > 2 * count -1:
                         aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool2*k{self.k}*index{shuffle_file2 - 2 * count}*')
                 aug_archive1, aug_archive2 = _np.load(aug_archive1_file[0]), _np.load(aug_archive2_file[0])
-                # if hparams.aug_mode == (-1, -1):
-                #     # Sample the augmentation methods without replacement. We use the sample amount to determine the frequency of methods.  
-                #     sample_list = sample([0,1,1,1,1,1,1,2,2,2,3,3,3,3,3,3,3,3,3], 2)
-                #     # aug_arr1, aug_arr2 = aug_arr[f'arr_{sample_list[0]}'], aug_arr[f'arr_{sample_list[1]}']
-                #     aug_arr1, aug_arr2 = aug_archive1[f'arr_{sample_list[0]}'], aug_archive2[f'arr_{sample_list[1]}']
-                # else:
-                    # aug_arr1, aug_arr2 = aug_arr[f'arr_{hparams.aug_mode[0]}'], aug_arr[f'arr_{hparams.aug_mode[1]}']
                 aug_arr1, aug_arr2 = aug_archive1['arr_0'], aug_archive2['arr_0']
+                # zscore for augmentation data (same as the depth and tnf)
                 _vambtools.zscore(aug_arr1, axis=0, inplace=True)
                 _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                 aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
                 print('difference',_torch.sum(_torch.sub(aug_tensor1, aug_tensor2), axis=1))
-                data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=dataloader.batch_size*2, drop_last=True,
-                            shuffle=True, num_workers=0,pin_memory=False)
+
+                # Double the batchsize and halve the learning rate if epoch in batchsteps
+                if epoch in batchsteps:
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] *= 0.5
+                    data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, tnftensor, aug_tensor1, aug_tensor2),
+                                        batch_size=dataloader.batch_size if epoch == 0 else data_loader.batch_size * 2,
+                                        shuffle=True, drop_last=False, num_workers=dataloader.num_workers, pin_memory=dataloader.pin_memory)
+                else:
+                    data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, tnftensor, aug_tensor1, aug_tensor2),
+                                        batch_size=dataloader.batch_size if epoch == 0 else data_loader.batch_size,
+                                        drop_last=False, shuffle=True, num_workers=dataloader.num_workers, pin_memory=dataloader.pin_memory)
                 self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
-                #for param in awl.parameters():
-                #     print('awl',param.retain_grad())
-       #     for i in range(len(fmap_block)):
-       #         print('fmap', fmap_block[i], file=logfile, end='\t\t')
-       #     for i in range(len(grad_block)):
-       #         print('grad', grad_block[i], file=logfile, end='\t\t')
+
         # vamb
         else:
             optimizer = Adam(self.parameters(), lr=lrate)
+            data_loader = _DataLoader(dataset=dataloader.dataset,
+                                    batch_size=dataloader.batch_size,
+                                    shuffle=True,
+                                    drop_last=False,
+                                    num_workers=dataloader.num_workers,
+                                    pin_memory=dataloader.pin_memory)
             for epoch in range(nepochs):
                 if epoch in batchsteps:
-                    dataloader = _DataLoader(dataset=dataloader.dataset,
-                                        batch_size=dataloader.batch_size * 2,
+                    data_loader = _DataLoader(dataset=data_loader.dataset,
+                                        batch_size=data_loader.batch_size * 2,
                                         shuffle=True,
                                         drop_last=False,
-                                        num_workers=dataloader.num_workers,
-                                        pin_memory=dataloader.pin_memory)
-                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
+                                        num_workers=data_loader.num_workers,
+                                        pin_memory=data_loader.pin_memory)
+                self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, Namespace())
 
         # Save weights - Lord forgive me, for I have sinned when catching all exceptions
         if modelfile is not None:
@@ -705,14 +702,9 @@ class VAE(_nn.Module):
 
 
 # Hidden layer monitor
-fmap_block = list()  # feature map container
-grad_block = list()  # gradient container
 def backward_hook(module, grad_in, grad_out):
-     print('grad_in', grad_in, 'grad_out', grad_out, end='\t\t')
-#    grad_block.append(('grad_in', grad_in))
-#    grad_block.append(('grad_out', grad_out))
+    print('grad_in', grad_in, 'grad_out', grad_out, end='\t\t')
 
 
 def forward_hook(module, inp, outp):
-    fmap_block.append(('input', inp))
-    fmap_block.append(('output', outp))
+    print('feature_map', inp, 'feature_out', outp, end='\t\t')
