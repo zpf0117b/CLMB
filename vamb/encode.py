@@ -136,6 +136,7 @@ class AutomaticWeightedLoss(_nn.Module):
         for i, loss in enumerate(x):
             #print(self.params[i].retain_grad(), self.params[i])
             loss_sum += 0.5 / (self.params[i] ** 2) * loss + _torch.log(1 + self.params[i] ** 2)
+        print('loss_sum',loss_sum)
         return loss_sum
 
 class VAE(_nn.Module):
@@ -229,15 +230,16 @@ class VAE(_nn.Module):
         self.dropoutlayer = _nn.Dropout(p=self.dropout)
 
         # Hidden layer monitor
-        # self.register_full_backward_hook(backward_hook)
+        #self.register_full_backward_hook(backward_hook)
         # self.register_forward_hook(forward_hook)
         for param in self.parameters():
-            print(type(param), param.size())
+            print('self',type(param), param.size())
 
         if cuda:
             self.cuda()
 
     def _encode(self, tensor):
+        #initial_tensor = tensor.clone()
         tensors = list()
 
         # Hidden layers
@@ -245,10 +247,10 @@ class VAE(_nn.Module):
             tensor = encodernorm(self.dropoutlayer(self.relu(encoderlayer(tensor))))
             #tensor = encodernorm(self.relu(encoderlayer(tensor)))
             tensors.append(tensor)
-
+        #print('test_tensors',_torch.sum(tensors[0]-tensors[1]))
         # Latent layers
+        #mu = self.mu(tensors[0]+tensor)
         mu = self.mu(tensor)
-
         # Note: This softplus constrains logsigma to positive. As reconstruction loss pushes
         # logsigma as low as possible, and KLD pushes it towards 0, the optimizer will
         # always push this to 0,meaning that the logsigma layer will be pushed towards
@@ -258,8 +260,8 @@ class VAE(_nn.Module):
         # necessitates a new round of hyperparameter optimization, and there is no way in
         # hell I am going to do that at the moment of writing.
         # Also remove needless factor 2 in definition of latent in reparameterize function.
+        #logsigma = self.softplus(self.logsigma(tensors[0]+tensor))
         logsigma = self.softplus(self.logsigma(tensor))
-
         return mu, logsigma
 
     # sample with gaussian noise
@@ -277,6 +279,7 @@ class VAE(_nn.Module):
         return latent
 
     def _decode(self, tensor):
+#        initial_tensor = tensor.clone()
         tensors = list()
 
         for decoderlayer, decodernorm in zip(self.decoderlayers, self.decodernorms):
@@ -284,8 +287,8 @@ class VAE(_nn.Module):
             #tensor = decodernorm(self.relu(decoderlayer(tensor)))
             tensors.append(tensor)
 
+   #     reconstruction = self.outputlayer(tensors[0]+tensor)
         reconstruction = self.outputlayer(tensor)
-
         # Decompose reconstruction to depths and tnf signal
         depths_out = reconstruction.narrow(1, 0, self.nsamples)
         tnf_out = reconstruction.narrow(1, self.nsamples, self.ntnf)
@@ -325,19 +328,11 @@ class VAE(_nn.Module):
     def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile, hparams, awl=None):
         self.train()
 # VAMB
-        if not self.contrast:
+        if hparams==Namespace():
             epoch_loss = 0
             epoch_kldloss = 0
             epoch_sseloss = 0
             epoch_celoss = 0
-
-            if epoch in batchsteps:
-                data_loader = _DataLoader(dataset=data_loader.dataset,
-                                        batch_size=data_loader.batch_size * 2,
-                                        shuffle=True,
-                                        drop_last=False,
-                                        num_workers=data_loader.num_workers,
-                                        pin_memory=data_loader.pin_memory)
 
             for depths_in, tnf_in in data_loader:
                 depths_in.requires_grad = True
@@ -398,26 +393,26 @@ class VAE(_nn.Module):
                 depths_out1, tnf_out1, mu1, logsigma1 = self(depths, aug_arr1)
                 depths_out2, tnf_out2, mu2, logsigma2 = self(depths, aug_arr2)
 
-                loss3 = self.nt_xent_loss(_torch.cat((depths_out1, tnf_out1), 1), _torch.cat((depths_out2, tnf_out2), 1), temperature=hparams.temperature)
-
+                #loss3 = self.nt_xent_loss(_torch.cat((depths_out1, tnf_out1), 1), _torch.cat((depths_out2, tnf_out2), 1), temperature=hparams.temperature)
+                loss3 = self.nt_xent_loss(mu1, mu2, temperature=hparams.temperature)
                 loss1, ce1, sse1, kld1 = self.calc_loss(depths, depths_out1, aug_arr1,
                                                     tnf_out1, mu1, logsigma1)
                 loss2, ce2, sse2, kld2 = self.calc_loss(depths, depths_out2, aug_arr2,
                                                     tnf_out2, mu2, logsigma2)
 
                 # loss = awl(loss3, (ce1+ce2), (sse1+sse2), (kld1+kld2))
-                loss = awl(loss3, loss1+loss2)
+                loss = awl(50000*loss3, 1000*(loss1+loss2))
                 #loss = loss3
                 loss.backward()
                 optimizer.step()
-                print(loss1,loss2,loss3,file=logfile)
+                print('loss',loss1,loss2,loss3,file=logfile)
 
                 epoch_loss += loss.data.item()
                 epoch_kldloss += (kld1+kld2).data.item()
                 epoch_cesseloss += (ce1+ce2).data.item()
                 epoch_clloss += (sse1+sse2).data.item()
-            for i in range(len(grad_block)):
-                print('grad', grad_block[i], file=logfile, end='\t\t')
+        #    for i in range(len(grad_block)):
+        #        print('grad', grad_block[i], file=logfile, end='\t\t')
 
             if logfile is not None:
                 print('\tEpoch: {}\tLoss: {:.6f}\tCL: {:.7f}\tCE SSE: {:.6f}\tKLD: {:.4f}\tBatchsize: {}'.format(
@@ -582,16 +577,34 @@ class VAE(_nn.Module):
         # Train
         # simclr
         if self.contrast:
+            optimizer = Adam([{'params':self.parameters(), 'lr':lrate}])
+#            optimizer.add_param_group({'params':self.parameters(), 'lr':lrate})
+
+            for epoch in range(batchsteps[-1]):
+                if epoch in batchsteps:
+                    dataloader = _DataLoader(dataset=dataloader.dataset,
+                                        batch_size=dataloader.batch_size * 2,
+                                        shuffle=True,
+                                        drop_last=False,
+                                        num_workers=dataloader.num_workers,
+                                        pin_memory=dataloader.pin_memory)
+                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
+
             awl = AutomaticWeightedLoss(2)
             # print(self.module_list.parameters())
             for param in awl.parameters():
-                print(type(param), param.size())
+                print('awl',type(param), param.size())
             #optimizer = lars.LARS([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
-            optimizer = Adam([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
+            optimizer.add_param_group({'params': awl.parameters(),'lr':10, 'weight_decay': 0})
+            for param_group in optimizer.param_groups:
+                param_group['lr'] *= 0.01
+            print('optimizer',optimizer.param_groups)
+            #optimizer = Adam([{'params':self.parameters(), 'lr':0.00001, 'weight_decay': 0}, {'params': awl.parameters(),'lr':0.001, 'weight_decay': 0}])
+            #optimizer2 = Adam(self.parameters(), lr=lrate)
             count = 0
             while count * count < nepochs:
                 count += 1
-            for epoch in range(nepochs):
+            for epoch in range(batchsteps[-1], nepochs):
                 depthstensor, tnftensor = dataloader.dataset.tensors
                 aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool0*k{self.k}*index{epoch//count}*'), glob.glob(rf'{augmentationpath+os.sep}pool1*k{self.k}*index{epoch%count}*')
                 if augdatashuffle:
@@ -614,7 +627,7 @@ class VAE(_nn.Module):
                 _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                 aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
                 print('difference',_torch.sum(_torch.sub(aug_tensor1, aug_tensor2), axis=1))
-                data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=hparams.batch_size, drop_last=True,
+                data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, aug_tensor1, aug_tensor2), batch_size=dataloader.batch_size*2, drop_last=True,
                             shuffle=True, num_workers=0,pin_memory=False)
                 self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
                 #for param in awl.parameters():
@@ -627,7 +640,14 @@ class VAE(_nn.Module):
         else:
             optimizer = Adam(self.parameters(), lr=lrate)
             for epoch in range(nepochs):
-                dataloader = self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
+                if epoch in batchsteps:
+                    dataloader = _DataLoader(dataset=dataloader.dataset,
+                                        batch_size=dataloader.batch_size * 2,
+                                        shuffle=True,
+                                        drop_last=False,
+                                        num_workers=dataloader.num_workers,
+                                        pin_memory=dataloader.pin_memory)
+                self.trainepoch(dataloader, epoch, optimizer, batchsteps_set, logfile, Namespace())
 
         # Save weights - Lord forgive me, for I have sinned when catching all exceptions
         if modelfile is not None:
@@ -688,8 +708,9 @@ class VAE(_nn.Module):
 fmap_block = list()  # feature map container
 grad_block = list()  # gradient container
 def backward_hook(module, grad_in, grad_out):
-    grad_block.append(('grad_in', grad_in))
-    grad_block.append(('grad_out', grad_out))
+     print('grad_in', grad_in, 'grad_out', grad_out, end='\t\t')
+#    grad_block.append(('grad_in', grad_in))
+#    grad_block.append(('grad_out', grad_out))
 
 
 def forward_hook(module, inp, outp):

@@ -153,7 +153,7 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
             # t_norm = t / _np.sum(t)
             # _np.add(t_norm, - 1/(2*4**k), out=t_norm)
             # print(t_norm)
-            print(t)
+            #print(t)
             if i == 0:
                 norm.extend(t)
 

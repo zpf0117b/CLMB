@@ -441,9 +441,9 @@ def main():
     trainos.add_argument('-t', dest='batchsize', metavar='', type=int,
                         default=256, help='starting batch size [256]')
     trainos.add_argument('-q', dest='batchsteps', metavar='', type=int, nargs='*',
-                        default=[25, 75, 100, 120], help='double batch size at epochs [25 75 150 300]')
+                        default=[25, 75, 150, 300], help='double batch size at epochs [25 75 150 300]')
     trainos.add_argument('-r', dest='lrate',  metavar='',type=float,
-                        default=-1, help='learning rate [0.001]')
+                        default=0.001, help='learning rate [0.001], set -1 for square lrate adjustment(a little bigger and dangerous)')
 
     # Clustering arguments
     clusto = parser.add_argument_group(title='Clustering options', description=None)
@@ -464,6 +464,7 @@ def main():
         sys.exit()
 
     args = parser.parse_args()
+    print(args)
     ######################### CHECK INPUT/OUTPUT FILES #####################
 
     # Outdir does not exist
@@ -501,7 +502,8 @@ def main():
         
         if not (-2 < args.augmode[0] < 4 and -2 < args.augmode[1] < 4):
             raise argparse.ArgumentTypeError('If contrastive learning is on, augmode must >-2 and <4')
-
+    else:
+        augmentation_data_dir = os.path.join(args.outdir, 'augmentation')
     # Make sure only one RPKM input is there
     rpkm_flag = True
     if sum(i is not None for i in (args.bamfiles, args.rpkm, args.jgi)) > 1:
