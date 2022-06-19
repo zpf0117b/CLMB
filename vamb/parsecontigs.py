@@ -163,7 +163,8 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
                 # print('gaussian',_np.sum(t_gaussian-t_norm))
 
             # mutations = mimics.transition(entry.sequence, 1 - 0.021, trans_count[i])
-            mutations = mimics.transition(entry.sequence, 1 - 0.065, trans_count[i])
+            if trans_count[i] != 0:
+                mutations = mimics.transition(entry.sequence, 1 - 0.065, trans_count[i])
             for j in range(trans_count[i]):
                 _kmercounts(bytearray(mutations[j]), k, counts_kmer)
                 # t_trans = counts_kmer / _np.sum(counts_kmer)
@@ -172,7 +173,8 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
                 # print('trans',_np.sum(t_trans-t_norm),_np.sum(counts_kmer-t))
 
             # mutations = mimics.transversion(entry.sequence, 1 - 0.0105, traver_count[i])
-            mutations = mimics.transversion(entry.sequence, 1 - 0.003, traver_count[i])
+            if traver_count[i] != 0:
+                mutations = mimics.transversion(entry.sequence, 1 - 0.003, traver_count[i])
             for j in range(traver_count[i]):
                 _kmercounts(bytearray(mutations[j]), k, counts_kmer)
                 # t_traver = counts_kmer / _np.sum(counts_kmer)
@@ -181,7 +183,8 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
                 # print('traver',_np.sum(t_traver-t_norm),_np.sum(counts_kmer-t))
 
             # mutations = mimics.transition_transversion(entry.sequence, 1 - 0.014, 1 - 0.007, mutated_count[i])
-            mutations = mimics.transition_transversion(entry.sequence, 1 - 0.065, 1 - 0.003, mutated_count[i])
+            if mutated_count[i] != 0:
+                mutations = mimics.transition_transversion(entry.sequence, 1 - 0.065, 1 - 0.003, mutated_count[i])
             for j in range(mutated_count[i]):
                 _kmercounts(bytearray(mutations[j]), k, counts_kmer)
                 # t_mutated = counts_kmer / _np.sum(counts_kmer)
