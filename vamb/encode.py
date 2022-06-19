@@ -596,24 +596,34 @@ class VAE(_nn.Module):
             count = 0
             while count * count < nepochs:
                 count += 1
+
+            def _aug_file_shuffle(_count, _augmentationpath):
+                _shuffle_file1 = random.randrange(0, 3 * _count - 1)
+                _aug_archive1_file = None if _shuffle_file1 < 2 * _count else glob.glob(rf'{_augmentationpath+os.sep}pool2*k{self.k}*index{_shuffle_file1 - 2 * _count}.*')
+                _shuffle_file2 = random.randrange(0, 3 * _count - 1)
+                _aug_archive2_file = None if _shuffle_file2 < 2 * _count else glob.glob(rf'{_augmentationpath+os.sep}pool2*k{self.k}*index{_shuffle_file2 - 2 * _count}.*')
+                return _aug_archive1_file, _aug_archive2_file
+                
+
             for epoch in range(nepochs):
-                while _torch.sum(_torch.sub(aug_tensor1, aug_tensor2)) == 0:
-                    aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool0*k{self.k}*index{epoch//count}*'), glob.glob(rf'{augmentationpath+os.sep}pool1*k{self.k}*index{epoch%count}*')
-                    # Read augmentation data from shuffled-indexed files
-                    if augdatashuffle:
-                        shuffle_file = random.randrange(0, 3 * count - 1)
-                        if shuffle_file > 2 * count -1:
-                            aug_archive1_file = glob.glob(rf'{augmentationpath+os.sep}pool2*k{self.k}*index{shuffle_file - 2 * count}*')
-                        shuffle_file2 = random.randrange(0, 3 * count - 1)
-                        if shuffle_file2 > 2 * count -1:
-                            aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool2*k{self.k}*index{shuffle_file2 - 2 * count}*')
-                    aug_archive1, aug_archive2 = _np.load(aug_archive1_file[0]), _np.load(aug_archive2_file[0])
-                    aug_arr1, aug_arr2 = aug_archive1['arr_0'], aug_archive2['arr_0']
+                aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool0*k{self.k}*index{epoch//count}.*'), glob.glob(rf'{augmentationpath+os.sep}pool1*k{self.k}*index{epoch%count}.*')
+                # Read augmentation data from shuffled-indexed files
+                if augdatashuffle:
+                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(count, augmentationpath)
+                    aug_archive1_file, aug_archive2_file = aug_archive1_file if shuffle_file1 is None else shuffle_file1, aug_archive2_file if shuffle_file2 is None else shuffle_file2
+                aug_tensor1, aug_tensor2 = 0, 0
+                while(_torch.sum(_torch.sub(aug_tensor1, aug_tensor2))==0):
+                    aug_arr1, aug_arr2 = _vambtools.read_npz(aug_archive1_file[0]), _vambtools.read_npz(aug_archive2_file[0])
                     # zscore for augmentation data (same as the depth and tnf)
                     _vambtools.zscore(aug_arr1, axis=0, inplace=True)
                     _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                     aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
-                print('difference',_torch.sum(_torch.sub(aug_tensor1, aug_tensor2), axis=1))
+                    # test
+                    print('augtensor', _torch.sum(aug_tensor1), _torch.sum(aug_tensor2), aug_archive1_file, aug_archive2_file, _np.sum(aug_arr1), _np.sum(aug_arr2))
+                    # if aug_tensor1 == aug_tensor2, reloop
+                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(count, augmentationpath)
+                    aug_archive1_file, aug_archive2_file = aug_archive1_file if shuffle_file1 is None else shuffle_file1, aug_archive2_file if shuffle_file2 is None else shuffle_file2
+                print('difference',_torch.sum(_torch.sub(aug_tensor1, aug_tensor2), axis=1), _torch.sum(_torch.sub(aug_tensor1, aug_tensor2)))
 
                 # Double the batchsize and halve the learning rate if epoch in batchsteps
                 if epoch in batchsteps:

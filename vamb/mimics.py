@@ -1,4 +1,5 @@
 import numpy as np
+import random
 
 
 def add_noise(x_train):
@@ -10,53 +11,56 @@ def add_noise(x_train):
     n_features = x_train.shape[0]
     index = (np.random.random(n_features) < 0.25).astype('float32')
     mean = np.mean(x_train)
-    noise = np.random.normal(-0.05*abs(mean) if abs(mean) < 1e-4 else -0.05, 0.05*abs(mean) if abs(mean) < 1e-4 else 0.05, n_features)
+    noise = np.random.normal(-0.05*abs(mean) if abs(mean) < 1e-422 else -0.05, 0.05*abs(mean) if abs(mean) < 1e-4 else 0.05, n_features)
     gaussian_train = x_train + noise * index
     return gaussian_train
 
-def mutate_kmers(seq, k_dict, k_count, k, positions, mutations):
-    """
-    Deprecated due to low speed
-    Compute the k-mer counts based on mutations.
+# def mutate_kmers(seq, k_dict, k_count, k, positions, mutations):
+#     """
+#     Deprecated due to low speed
+#     Compute the k-mer counts based on mutations.
 
-    :param seq: Original Sequence to be mutated.
-    :param k_dict: Dictionary with kmers.
-    :param k_count: Array with k-mer counts in the original seq.
-    :param k: word length in the k-mer counts
-    :param positions: Array with the mutated positions.
-    :param mutations: Array with the correspondent mutations.
-    :return: Array with kmer counts of the mutated version
-    """
+#     :param seq: Original Sequence to be mutated.
+#     :param k_dict: Dictionary with kmers.
+#     :param k_count: Array with k-mer counts in the original seq.
+#     :param k: word length in the k-mer counts
+#     :param positions: Array with the mutated positions.
+#     :param mutations: Array with the correspondent mutations.
+#     :return: Array with kmer counts of the mutated version
+#     """
 
-    new_count = k_count.copy()
+#     new_count = k_count.copy()
 
-    for (i, new_bp) in zip(positions, mutations):
-        max_j = min(k, len(seq)-i, i)
-        min_j = min(k, i)
-        for j in range(1, max_j + 1):
-            idx = i - min_j + j
-            kmer = seq[idx: idx + k]
-            new_kmer = list(kmer)
-            new_kmer[-j] = new_bp
-            new_kmer = ''.join(new_kmer)
+#     for (i, new_bp) in zip(positions, mutations):
+#         max_j = min(k, len(seq)-i, i)
+#         min_j = min(k, i)
+#         for j in range(1, max_j + 1):
+#             idx = i - min_j + j
+#             kmer = seq[idx: idx + k]
+#             new_kmer = list(kmer)
+#             new_kmer[-j] = new_bp
+#             new_kmer = ''.join(new_kmer)
 
-            if 'N' in kmer or 'N' in new_kmer:
-                pass
-            else:
-                new_count[k_dict[kmer]] -= 1
-                new_count[k_dict[new_kmer]] += 1
+#             if 'N' in kmer or 'N' in new_kmer:
+#                 pass
+#             else:
+#                 new_count[k_dict[kmer]] -= 1
+#                 new_count[k_dict[new_kmer]] += 1
 
-    return new_count
+#     return new_count
 
 def base_transition(nucleotide):
+    ### >>> list(b'AGCT')
+    ### [65, 71, 67, 84]
+    base_probability = random.random()
     if nucleotide == 65:
-        return 71
+        return 71 if base_probability < 0.027/0.065 else 65
     elif nucleotide == 71:
         return 65
     elif nucleotide == 84:
-        return 67
+        return 67 if base_probability < 0.064/0.065 else 84
     elif nucleotide == 67:
-        return 84
+        return 84 if base_probability < 0.025/0.065 else 67
     else:
         return 78
 
@@ -67,8 +71,6 @@ def transition(seq, threshold, iter_num=100):
     :param threshold: probability of NO Transition.
     :return: Mutated Sequence.
     """
-    ### >>> list(b'AGCT')
-    ### [65, 71, 67, 84]
 
     x = np.random.random((iter_num, len(seq)))
     index = np.where(x > threshold)
@@ -81,18 +83,28 @@ def transition(seq, threshold, iter_num=100):
     return seq_array
 
 def base_transversion(nucleotide):
-    if nucleotide == 65 or nucleotide == 71:
-        random_number = np.random.uniform()
-        if random_number > 0.5:
-            return 84
-        else:
+    ### >>> list(b'AGCT')
+    ### [65, 71, 67, 84]
+    base_probability = random.random()
+    if nucleotide == 65:
+        if base_probability < 0.01/0.03:
             return 67
-    elif nucleotide == 84 or nucleotide == 67:
-        random_number = np.random.uniform()
-        if random_number > 0.5:
+        else:
+            return 84
+    elif nucleotide == 71:
+        return 71
+    elif nucleotide == 84:
+        if base_probability < 0.01/0.03:
+            return 65
+        elif 0.01/0.03 < base_probability < 0.02/0.03:
+            return 71
+        else:
+            return 84
+    elif nucleotide == 67:
+        if base_probability < 0.01/0.03:
             return 65
         else:
-            return 71
+            return 67
     else:
         return 78
 
