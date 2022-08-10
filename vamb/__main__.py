@@ -3,6 +3,7 @@
 # More imports below, but the user's choice of processors must be parsed before
 # numpy can be imported.
 from ast import arg
+import math
 import sys
 import os
 import argparse
@@ -11,9 +12,9 @@ import datetime
 import time
 import shutil
 import random
+import glob
+import warnings
 from math import sqrt
-
-from vamb import augmentation
 
 DEFAULT_PROCESSES = min(os.cpu_count(), 8)
 
@@ -76,9 +77,18 @@ def calc_tnf(outdir, fastapath, k, tnfpath, namespath, lengthspath, mincontiglen
                 tnffile.close()
         else:
             os.system(f'mkdir -p {augmentation_store_dir}')
+
+            backup_iteration = math.ceil(math.sqrt(nepochs))
+            log('Generating {} augmentation data'.format(backup_iteration), logfile, 1)
             with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
-                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, k=k, store_dir=augmentation_store_dir, backup_iteration=nepochs, augmode=augmode, augdatashuffle=augdatashuffle)
+                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, k=k, store_dir=augmentation_store_dir, backup_iteration=backup_iteration, augmode=augmode, augdatashuffle=augdatashuffle)
                 tnffile.close()
+
+        # Discard any sequence with a length below mincontiglength
+        mask = contiglengths >= mincontiglength
+        tnfs = tnfs[mask]
+        contignames = list(np.array(contignames)[mask])
+        contiglengths = contiglengths[mask]
 
         vamb.vambtools.write_npz(os.path.join(outdir, 'tnf.npz'), tnfs)
         vamb.vambtools.write_npz(os.path.join(outdir, 'lengths.npz'), contiglengths)
@@ -153,7 +163,7 @@ def trainvae(outdir, rpkms, tnfs, k, contrastive, augmode, augdatashuffle, augme
     nsamples = rpkms.shape[1]
 
     # basic config for contrastive learning
-    aug_all_method = ['NoAugmentation','GaussianNoise','Transition','Transversion','Mutation']
+    aug_all_method = ['AllAugmentation','GaussianNoise','Transition','Transversion','Mutation']
     hparams = Namespace(
         batch_size=batchsize,
         validation_size=4096,
@@ -175,10 +185,10 @@ def trainvae(outdir, rpkms, tnfs, k, contrastive, augmode, augdatashuffle, augme
     if contrastive:
         if True:
             vae = vamb.encode.VAE(ntnf=int(tnfs.shape[1]), nsamples=nsamples, k=k, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
-            modelpath = os.path.join(outdir.replace('results','data'), f"{aug_all_method[hparams.aug_mode[0]]+'_'+aug_all_method[hparams.aug_mode[1]]}.pt")
-            vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams, augmentationpath=augmentationpath, augdatashuffle=augdatashuffle)
+            modelpath = os.path.join(outdir, f"{aug_all_method[hparams.aug_mode[0]]+'_'+aug_all_method[hparams.aug_mode[1]]}.pt")
+            vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams, augmentationpath=augmentationpath, augdatashuffle=augdatashuffle, mask=mask)
         else:
-            modelpath = os.path.join(outdir.replace('results','data'), f"final-dim/{aug_all_method[hparams.aug_mode[0]]+' '+aug_all_method[hparams.aug_mode[1]]+' '+str(hparams.hidden_mlp)}.pt")
+            modelpath = os.path.join(outdir, f"final-dim/{aug_all_method[hparams.aug_mode[0]]+' '+aug_all_method[hparams.aug_mode[1]]+' '+str(hparams.hidden_mlp)}.pt")
             vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
             vae.to(('cuda' if cuda else 'cpu'))
     else:
@@ -213,34 +223,6 @@ def cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclus
     log('Use CUDA for clustering: {}'.format(cuda), logfile, 1)
     log('Separator: {}'.format(None if separator is None else ('"'+separator+'"')),
         logfile, 1)
-# other clustering algorithm
-#    from sklearn.cluster import DBSCAN, MiniBatchKMeans
-#    from sklearn.metrics.pairwise import pairwise_distances
-#    from scipy.sparse import csr_matrix
-#    import math
-#    it = []
-#    def get_all_index(lst: list=[], item=None):
-#        return [index for (index,value) in enumerate(lst) if value == item]
-
-# dbscan
-    # gregarious,outlier = range(len(latent)),[]
-    # dbscan_clustering = DBSCAN(eps=0.35, min_samples=2)
-    # dbscan_labels = dbscan_clustering.fit_predict(latent)
-    # all_value_dbscan = set(dbscan_labels)
-    # outlier = get_all_index(dbscan_labels, -1)
-    # print(len(all_value_dbscan),len(outlier))
-
-    # for v in all_value_dbscan:
-    #     if v != -1:
-    #         v_cluster = get_all_index(dbscan_labels, v)
-    #         medoid = contignames[v_cluster[0]]
-    #         points = {contignames[i] for i in v_cluster}
-    #         it.append((medoid, points))
-
-    # for o in outlier:
-    #     medoid = contignames[o]
-    #     points = {contignames[i] for i in [o]}
-    #     it.append((medoid, points))
 
 # medoid
     it = vamb.cluster.cluster(latent, contignames, destroy=True, windowsize=windowsize,
@@ -305,20 +287,21 @@ def run(outdir, fastapath, k, tnfpath, namespath, lengthspath,
         nepochs, batchsize, cuda, alpha, beta, dropout, lrate, batchsteps, windowsize,
         minsuccesses, minclustersize, separator, maxclusters, minfasta, logfile):
 
-    log('Starting Vamb version ' + '.'.join(map(str, vamb.__version__)), logfile)
+    if contrastive:
+        log('Starting Clmb version ' + '.'.join(map(str, vamb.__version__)), logfile)
+    else:
+        log('Starting Vamb version ' + '.'.join(map(str, vamb.__version__)), logfile)
     log('Date and time is ' + str(datetime.datetime.now()), logfile, 1)
     begintime = time.time()
-    print(f'Start at {round(time.time(), 2)}')
+    log(f'Start at {round(time.time(), 2)}', logfile, 1)
 
     # Get TNFs, save as npz
-    if contrastive and augmentationpath is None:
-        augmentationpath = os.path.join(outdir, 'augmentation')
     tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, k, tnfpath, namespath,
                                             lengthspath, mincontiglength, logfile, nepochs, augdatashuffle, augmentationpath, augmode, contrastive)
 
     # if not (os.path.exists(augmentationpath) and len(os.listdir(augmentationpath)) >= nepochs * 4):
     #     raise FileNotFoundError('Not an existing directory or not an directory with enough files for training' + augmentationpath)
-    print(f'TNFs completed at {round(time.time(), 2)}')
+    log(f'TNFs completed at {round(time.time(), 2)}', logfile, 1)
 
     # Parse BAMs, save as npz
     refhash = None if norefcheck else vamb.vambtools._hash_refnames(contignames)
@@ -326,12 +309,12 @@ def run(outdir, fastapath, k, tnfpath, namespath, lengthspath,
         rpkms = calc_rpkm(outdir, bampaths, rpkmpath, jgipath, mincontiglength, refhash,
                       len(contignames), minalignscore, minid, subprocesses, logfile)
     else:
-        if rpkmpath == r'padding$padding':
+        if rpkmpath == r'<padding|For|None|Rpkm|Input>':
             rpkms = np.ones((len(contignames),1),dtype=np.float32)
         else:
             rpkms_data = np.load(rpkmpath)
             rpkms = rpkms_data[rpkms_data.files[0]]
-    print(f'RPKM completed at {round(time.time(), 2)}')
+    log(f'RPKM completed at {round(time.time(), 2)}', logfile, 1)
 
     # Train, save model
     mask, latent = trainvae(outdir, rpkms, tnfs, k, contrastive, augmode, augdatashuffle, augmentationpath, temperature, nhiddens, nlatent, alpha, beta,
@@ -339,13 +322,13 @@ def run(outdir, fastapath, k, tnfpath, namespath, lengthspath,
 
     del tnfs, rpkms
     contignames = [c for c, m in zip(contignames, mask) if m]
-    print(f'Deep learning completed at {round(time.time(), 2)}')
+    log(f'Deep learning completed at {round(time.time(), 2)}', logfile, 1)
 
     # Cluster, save tsv file
     clusterspath = os.path.join(outdir, 'clusters.tsv')
     cluster(clusterspath, latent, contignames, windowsize, minsuccesses, maxclusters,
             minclustersize, separator, cuda, logfile)
-    print(f'Clustering completed at {round(time.time(), 2)}')
+    log(f'Clustering completed at {round(time.time(), 2)}', logfile, 1)
     del latent
 
     if minfasta is not None:
@@ -388,13 +371,13 @@ def main():
 
     # Contrastive learning arguments
     contrastiveos = parser.add_argument_group(title='Contrastive learning input')
-    contrastiveos.add_argument('--contrastive', action='store_true', help='Whether to perform contrastive learning(CLMB) or not(VAMB). Default: False')
-    contrastiveos.add_argument('--augmode', metavar='', nargs = 2, type = int, default=[-1, -1],
-                         help='The augmentation method. Requires 2 int. Choices: -1,0,1,2,3')
+    contrastiveos.add_argument('--contrastive', action='store_true', help='Whether to perform contrastive learning(CLMB) or not(VAMB). [False]')
+    contrastiveos.add_argument('--augmode', metavar='', nargs = 2, type = int, default=[3, 3],
+                        help='The augmentation method. Requires 2 int. specify -1 if trying all augmentation methods. Choices: 0 for gaussian noise, 1 for transition, 2 for transversion, 3 for mutation, -1 for all. [3, 3]')
     contrastiveos.add_argument('--augdatashuffle', action='store_true', 
-            help='Whether to shuffle the training augmentation data (True: For each training, random select the augmentation data from the augmentation dir pool.)')
-    contrastiveos.add_argument('--augmentation', metavar='', help='path to augmentation dir')
-    contrastiveos.add_argument('--temperature', metavar='', default=0.1,type=float, help='The temperature for the normalized temperature-scaled cross entropy loss')
+            help='Whether to shuffle the training augmentation data (True: For each training, random select the augmentation data from the augmentation dir pool.\n!!!BE CAUTIOUS WHEN TRUNING ON [False])')
+    contrastiveos.add_argument('--augmentation', metavar='', help='path to augmentation dir. [outdir/augmentation]')
+    contrastiveos.add_argument('--temperature', metavar='', default=1,type=float, help='The temperature for the normalized temperature-scaled cross entropy loss. [1]')
 
     # RPKM arguments
     rpkmos = parser.add_argument_group(title='RPKM input (either BAMs, JGI or .npz required)')
@@ -437,13 +420,13 @@ def main():
     trainos = parser.add_argument_group(title='Training options', description=None)
 
     trainos.add_argument('-e', dest='nepochs', metavar='', type=int,
-                        default=250, help='epochs [900]')
+                        default=600, help='epochs [600]')
     trainos.add_argument('-t', dest='batchsize', metavar='', type=int,
                         default=256, help='starting batch size [256]')
     trainos.add_argument('-q', dest='batchsteps', metavar='', type=int, nargs='*',
                         default=[25, 75, 150, 300], help='double batch size at epochs [25 75 150 300]')
     trainos.add_argument('-r', dest='lrate',  metavar='',type=float,
-                        default=0.001, help='learning rate [0.001], set -1 for square lrate adjustment(a little bigger and dangerous)')
+                        default=0.001, help='learning rate [0.001], set -1 for square lrate adjustment(a little bigger and DANGEROUS!!!)')
 
     # Clustering arguments
     clusto = parser.add_argument_group(title='Clustering options', description=None)
@@ -472,7 +455,7 @@ def main():
     if os.path.exists(args.outdir):
         # os.system(f'rm -r {args.outdir}')
         # raise FileExistsError(args.outdir)
-        print("OUTDIR exists. Please be careful that some files might be rewrited")
+        warnings.warn("OUTDIR exists. Please be careful that some files might be rewrited", FutureWarning)
 
     # Outdir is in an existing parent dir
     parentdir = os.path.dirname(args.outdir)
@@ -499,11 +482,37 @@ def main():
             augmentation_data_dir = os.path.join(args.outdir, 'augmentation')
         else:
             augmentation_data_dir = args.augmentation
-        
-        if not (-2 < args.augmode[0] < 4 and -2 < args.augmode[1] < 4):
-            raise argparse.ArgumentTypeError('If contrastive learning is on, augmode must >-2 and <4')
+
+        augmentation_number = [0, 0]
+        for i in range(2):
+            if args.augmode[i] == -1:
+                augmentation_number[i] = len(glob.glob(rf'{augmentation_data_dir+os.sep}pool{i}*k{args.k}*'))
+            elif 0<= args.augmode[i] <= 3:
+                augmentation_number[i] = len(glob.glob(rf'{augmentation_data_dir+os.sep}pool{i}*k{args.k}*_.{args.augmode[i]}._*'))
+            else:
+                raise argparse.ArgumentTypeError('If contrastive learning is on, augmode must be int >-2 and <4')
+
+        if args.fasta is None:
+            warnings.warn("CLMB can't recognize the type of augmentation data, so please make sure your augmentation data in augmentation dir fit the augmode", UserWarning)
+            if augmentation_number[0] == 0 or augmentation_number[1] == 0:
+                raise argparse.ArgumentTypeError('Must specify either FASTA or the augmentation .npz inputs')
+            if (2 * augmentation_number[0]) ** 2 < args.nepochs or (2 * augmentation_number[1]) ** 2 < args.nepochs:
+                warnings.warn("Not enough augmentation, use replicated data in the training, which might decrease the performance", FutureWarning)
+        else:
+            if 0 < (2 * augmentation_number[0]) ** 2 < args.nepochs or 0 < (2 * augmentation_number[1]) ** 2 < args.nepochs:
+                warnings.warn("Not enough augmentation, regenerate the augmentation to maintain the performance, please use ctrl+C to stop this process in 20 seconds if you would not like the augmentation dir to be rewritten. \
+                    You can choose using the augmentations in the augmentation dir (without specifying --fasta) after interruptting this program, or continuing this program to erase the augmentation dir and regenerate the augmentation data", UserWarning)
+                for sleep_time in range(4):
+                    print(f'Program to be continued in {20-4*sleep_time}s, please use ctrl+C to stop this process if you would not like the augmentation dir to be rewritten')
+                    time.sleep(5)
+                warnings.warn("Not enough augmentation, regenerate the augmentation to maintain the performance, erasing the augmentation dir. We will regenerate the augmentation in the following function", UserWarning)
+                for erase_file in glob.glob(rf'{augmentation_data_dir+os.sep}pool*k{args.k}*'):
+                    print(f'removing {erase_file} ...')
+                    os.system(f'rm {erase_file}')
+
     else:
         augmentation_data_dir = os.path.join(args.outdir, 'augmentation')
+
     # Make sure only one RPKM input is there
     rpkm_flag = True
     if sum(i is not None for i in (args.bamfiles, args.rpkm, args.jgi)) > 1:
@@ -578,7 +587,8 @@ def main():
         raise argparse.ArgumentTypeError('All batchsteps must be 1 or higher')
 
     if args.lrate == -1:
-        lrate = 0.075 * sqrt(args.batchsize)  if args.contrastive else 1e-3
+        warnings.warn('The learning rate might be a bit big.', UserWarning)
+        lrate = 0.0075 * sqrt(args.batchsize) if args.contrastive else 1e-3
     else:
         lrate = args.lrate
     ###################### CHECK CLUSTERING OPTIONS ####################
@@ -625,7 +635,7 @@ def main():
             augmentation_data_dir,
             args.temperature,
             args.bamfiles,
-            args.rpkm if rpkm_flag else r'padding$padding',
+            args.rpkm if rpkm_flag else r'<padding|For|None|Rpkm|Input>',
             args.jgi,
             mincontiglength=args.minlength,
             norefcheck=args.norefcheck,

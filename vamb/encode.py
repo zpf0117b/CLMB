@@ -14,32 +14,30 @@ Usage:
 
 __cmd_doc__ = """Encode depths and TNF using a VAE to latent representation"""
 
-import os
-import random
-import glob
+import os as _os
+import random as _random
+from glob import glob as _glob
 import numpy as _np
 import torch as _torch
 _torch.manual_seed(42)
 #_torch.seed()
 
-import math
-import pickle
-from argparse import Namespace
+import math as _math
+from argparse import Namespace as _Namespace
+import warnings as _warnings
 
 from torch import nn as _nn
-from torch.optim import Adam, SGD
-from . import lars
+from torch.optim import Adam as _Adam
 from torch.nn.functional import softmax as _softmax
 from torch.utils.data import DataLoader as _DataLoader
 from torch.utils.data.dataset import TensorDataset as _TensorDataset
-from torch.utils.data import SubsetRandomSampler, BatchSampler
-import torch.nn.functional as F
+import torch.nn.functional as _F
 import vamb.vambtools as _vambtools
 
 if _torch.__version__ < '0.4':
     raise ImportError('PyTorch version must be 0.4 or newer')
 
-def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False, contrastive=True):
+def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False):
     """Create a DataLoader and a contig mask from RPKM and TNF.
 
     The dataloader is an object feeding minibatches of contigs to the VAE.
@@ -113,8 +111,10 @@ def make_dataloader(rpkm, tnf, batchsize=256, destroy=False, cuda=False, contras
 
     return dataloader, mask
 
+'''
 # Automatic Loss training for multi-task learning
 # Copied from https://github.com/Mikoto10032/AutomaticWeightedLoss
+'''
 class AutomaticWeightedLoss(_nn.Module):
     """automatically weighted multi-task loss
     Params：
@@ -313,7 +313,7 @@ class VAE(_nn.Module):
         if self.nsamples > 1:
             # Add 1e-9 to depths_out to avoid numerical instability.
             ce = - ((depths_out + 1e-9).log() * depths_in).sum(dim=1).mean()
-            ce_weight = (1 - self.alpha) / math.log(self.nsamples)
+            ce_weight = (1 - self.alpha) / _math.log(self.nsamples)
         else:
             ce = (depths_out - depths_in).pow(2).sum(dim=1).mean()
             ce_weight = 1 - self.alpha
@@ -328,8 +328,8 @@ class VAE(_nn.Module):
 
     def trainepoch(self, data_loader, epoch, optimizer, batchsteps, logfile, hparams, awl=None):
         self.train()
-# VAMB
-        if hparams==Namespace():
+        # VAMB
+        if hparams == _Namespace():
             epoch_loss = 0
             epoch_kldloss = 0
             epoch_sseloss = 0
@@ -369,7 +369,7 @@ class VAE(_nn.Module):
                     ), file=logfile)
 
                 logfile.flush()
-    # simclr
+        # CLMB
         else:
             epoch_loss = 0
             epoch_kldloss = 0
@@ -400,22 +400,31 @@ class VAE(_nn.Module):
                 loss_contrast1 = self.nt_xent_loss(tnf_out_aug1, tnf_out_aug2, temperature=hparams.temperature)
                 loss_contrast2 = self.nt_xent_loss(tnf_out_aug2, tnf_out, temperature=hparams.temperature)
                 loss_contrast3 = self.nt_xent_loss(tnf_out, tnf_out_aug1, temperature=hparams.temperature)
+                # _torch.concat((depths_out, tnf_out), 1)
+                # _torch.concat((depths_out1, tnf_out_aug1), 1)
+                # _torch.concat((depths_out2, tnf_out_aug2), 1)
                 loss1, ce1, sse1, kld1 = self.calc_loss(depths, depths_out, tnf_in, tnf_out, mu, logsigma)
+                # loss2, ce2, sse2, kld2 = self.calc_loss(depths, depths_out, tnf_in, tnf_out, mu, logsigma)
+                # loss3, ce3, sse3, kld3 = self.calc_loss(depths, depths_out, tnf_in, tnf_out, mu, logsigma)
 
-                # Add weight to avoid gradient disappearance
-                loss = awl(100*loss_contrast1, 100*loss_contrast2, 100*loss_contrast3) + 10000*loss1
+                # NOTE: Add weight to avoid gradient disappearance
+                sigma = 4000
+                # loss = awl(800*loss_contrast1, 800*loss_contrast2, 800*loss_contrast3) + 10000*loss1 + 2000*loss2 + 2000*loss3
+                loss = awl(sigma*loss_contrast1, sigma*loss_contrast2, sigma*loss_contrast3) + 10000*loss1
+                # loss = awl(awl_c(800*loss_contrast1, 800*loss_contrast2, 800*loss_contrast3), 10000*loss1, 2000*loss2, 2000*loss3)
                 loss.backward()
+
                 optimizer.step()
-                print('loss',loss1,loss_contrast1,loss_contrast2,loss_contrast3,file=logfile)
+                print('loss', loss-10000*loss1,loss1,loss_contrast1,loss_contrast2,loss_contrast3,file=logfile)
 
                 epoch_loss += loss.data.item()
                 epoch_kldloss += (kld1).data.item()
                 epoch_cesseloss += (ce1).data.item()
                 epoch_clloss += (sse1).data.item()
 
-        # Gradient monitor using hook (require more memory and time cost)
-        #    for i in range(len(grad_block)):
-        #        print('grad', grad_block[i], file=logfile, end='\t\t')
+            #Gradient monitor using hook (require extra memory and time cost)
+            #for i in range(len(grad_block)):
+            #     print('grad', grad_block[i], file=logfile, end='\t\t')
 
             if logfile is not None:
                 print('\tEpoch: {}\tLoss: {:.6f}\tCL: {:.7f}\tCE SSE: {:.6f}\tKLD: {:.4f}\tBatchsize: {}'.format(
@@ -523,8 +532,8 @@ class VAE(_nn.Module):
 
         return vae
 
-    def trainmodel(self, dataloader, nepochs=500, lrate=1e-3,
-                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams=None, augmentationpath=None, augdatashuffle=False):
+    def trainmodel(self, dataloader, nepochs=320, lrate=1e-3,
+                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams=None, augmentationpath=None, augdatashuffle=False, mask=None):
         """Train the autoencoder from depths array and tnf array.
         Inputs:
             dataloader: DataLoader made by make_dataloader
@@ -533,6 +542,10 @@ class VAE(_nn.Module):
             batchsteps: None or double batchsize at these epochs [25, 75, 150, 300]
             logfile: Print status updates to this file if not None [None]
             modelfile: Save models to this file if not None [None]
+            hparams: CLMB only. Set the batchsize, augmode, temperature for contrastive learning. [None] 
+            augmentationpath: CLMB only. Path to find the augmented data [None]
+            augdatashuffle: CLMB only. Shuffle the augmented data for training to introduce more noise. Setting True is not recommended. [False]
+            mask: CLMB only. Mask the augmented data to keep nonzero tnfs and rpkm [None]
         Output: None
         """
 
@@ -579,68 +592,86 @@ class VAE(_nn.Module):
             print('\tN samples:', nsamples, file=logfile, end='\n\n')
 
         # Train
-        # simclr
+        # CLMB
         if self.contrast:
-            # Optimizer setting
+            '''Optimizer setting'''
             awl = AutomaticWeightedLoss(3)
-            optimizer = Adam([{'params':self.parameters(), 'lr':lrate}, {'params': awl.parameters(),'lr':0.001, 'weight_decay': 0}])
-            # optimizer.add_param_group({'params':self.parameters(), 'lr':lrate})
+            optimizer = _Adam([{'params':self.parameters(), 'lr':lrate}, {'params': awl.parameters(), 'lr':0.111, 'weight_decay': 0, 'eps': 1e-7}])
             # for param in awl.parameters():
             #     print('awl',type(param), param.size())
-            # Other optimizer options (nor complemented)
-            # optimizer = lars.LARS([{'params':self.parameters(), 'lr':lrate, 'weight_decay': 0.01}, {'params': awl.parameters(),'lr':0.1, 'weight_decay': 0}])
+            #Other optimizer options (not complemented)
             # optimizer.add_param_group({'params': awl.parameters(),'lr':0.1, 'weight_decay': 0})
             # print('optimizer',optimizer.param_groups)
 
-            # Read augmentation data from indexed files
-            count = 0
-            while count * count < nepochs:
-                count += 1
+            '''Read augmentation data from indexed files. Note that, CLMB can't guarantee an order training with augmented data if the outdir exists.'''
+            augmentation_count_number = [0, 0]
+            augmentation_count_number[0] = len(_glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}*')) if hparams.augmode[0] == -1 else len(_glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}*_.{hparams.augmode[0]}._*'))
+            augmentation_count_number[1] = len(_glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}*')) if hparams.augmode[0] == -1 else len(_glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}*_.{hparams.augmode[1]}._*'))
 
-            def _aug_file_shuffle(_count, _augmentationpath):
-                _shuffle_file1 = random.randrange(0, 3 * _count - 1)
-                _aug_archive1_file = None if _shuffle_file1 < 2 * _count else glob.glob(rf'{_augmentationpath+os.sep}pool2*k{self.k}*index{_shuffle_file1 - 2 * _count}.*')
-                _shuffle_file2 = random.randrange(0, 3 * _count - 1)
-                _aug_archive2_file = None if _shuffle_file2 < 2 * _count else glob.glob(rf'{_augmentationpath+os.sep}pool2*k{self.k}*index{_shuffle_file2 - 2 * _count}.*')
+            if augmentation_count_number[0] > _math.ceil(_math.sqrt(nepochs)) or augmentation_count_number[1] > _math.ceil(_math.sqrt(nepochs)):
+                _warnings.warn('Too many augmented data, augmented data might not be trained enough. CLMB do not know how this influence the performance', FutureWarning)
+            elif augmentation_count_number[0] < _math.ceil(_math.sqrt(nepochs)) or augmentation_count_number[1] > _math.ceil(_math.sqrt(nepochs)):
+                raise RuntimeError('Shortage of augmented data. Please regenerate enough augmented data using fasta files, or do not specify the --contrastive option to run VAMB')
+
+            '''Function for shuffling the augmented data (if needed)'''
+            def _aug_file_shuffle(_count, _augmentationpath, _augdatashuffle):
+                _shuffle_file1 = _random.randrange(0, sum(_count) - 1)
+                if _augdatashuffle:
+                    _aug_archive1_file = None if _shuffle_file1 < _count[0] else (_glob(rf'{_augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_*') if hparams.augmode[1] == -1 else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_.{hparams.augmode[1]}._*'))
+                else:
+                    _aug_archive1_file = _glob(rf'{_augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_*') if hparams.augmode[0] == -1 else _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_.{hparams.augmode[0]}._*')
+                _shuffle_file2 = _random.randrange(0, sum(_count) - 1)
+                if _augdatashuffle:
+                    _aug_archive2_file = None if _shuffle_file2 < _count[1] else (_glob(rf'{_augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_*') if hparams.augmode[1] == -1 else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_.{hparams.augmode[1]}._*'))
+                else:
+                    _aug_archive2_file = _glob(rf'{_augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_*') if hparams.augmode[1] == -1 else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_.{hparams.augmode[1]}._*')
                 return _aug_archive1_file, _aug_archive2_file
                 
 
             for epoch in range(nepochs):
-                aug_archive1_file, aug_archive2_file = glob.glob(rf'{augmentationpath+os.sep}pool0*k{self.k}*index{epoch//count}.*'), glob.glob(rf'{augmentationpath+os.sep}pool1*k{self.k}*index{epoch%count}.*')
-                # Read augmentation data from shuffled-indexed files
+                aug_archive1_file = _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{epoch // augmentation_count_number[0]}_*') if hparams.augmode[0] == -1 else _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{epoch // augmentation_count_number[0]}_.{hparams.augmode[0]}._*')
+                aug_archive2_file = _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{epoch % augmentation_count_number[1]}_*') if hparams.augmode[1] == -1 else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{epoch % augmentation_count_number[1]}_.{hparams.augmode[1]}._*')
+                '''If augdatashuffle in on, read augmentation data from shuffled-indexed files'''
                 if augdatashuffle:
-                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(count, augmentationpath)
+                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(augmentation_count_number, augmentationpath, augdatashuffle)
                     aug_archive1_file, aug_archive2_file = aug_archive1_file if shuffle_file1 is None else shuffle_file1, aug_archive2_file if shuffle_file2 is None else shuffle_file2
+                '''Avoid training 2 same augmentation data'''
                 aug_tensor1, aug_tensor2 = 0, 0
                 while(_torch.sum(_torch.sub(aug_tensor1, aug_tensor2))==0):
                     aug_arr1, aug_arr2 = _vambtools.read_npz(aug_archive1_file[0]), _vambtools.read_npz(aug_archive2_file[0])
-                    # zscore for augmentation data (same as the depth and tnf)
+                    '''Mutate rpkm and tnf array in-place instead of making a copy.'''
+                    aug_arr1 = _vambtools.numpy_inplace_maskarray(aug_arr1, mask)
+                    aug_arr2 = _vambtools.numpy_inplace_maskarray(aug_arr2, mask)
+                    '''Zscore for augmentation data (same as the depth and tnf)'''
                     _vambtools.zscore(aug_arr1, axis=0, inplace=True)
                     _vambtools.zscore(aug_arr2, axis=0, inplace=True)
                     aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
-                    # test
-                    print('augtensor', _torch.sum(aug_tensor1), _torch.sum(aug_tensor2), aug_archive1_file, aug_archive2_file, _np.sum(aug_arr1), _np.sum(aug_arr2))
+                    # print('augtensor', _torch.sum(aug_tensor1 ** 2), _torch.sum(aug_tensor2 ** 2), aug_archive1_file, aug_archive2_file, _np.sum(aug_arr1 ** 2), _np.sum(aug_arr2 ** 2))
                     # if aug_tensor1 == aug_tensor2, reloop
-                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(count, augmentationpath)
+                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(augmentation_count_number, augmentationpath, augdatashuffle)
                     aug_archive1_file, aug_archive2_file = aug_archive1_file if shuffle_file1 is None else shuffle_file1, aug_archive2_file if shuffle_file2 is None else shuffle_file2
-                print('difference',_torch.sum(_torch.sub(aug_tensor1, aug_tensor2), axis=1), _torch.sum(_torch.sub(aug_tensor1, aug_tensor2)))
+                # print('difference',_torch.sum(_torch.sub(aug_tensor1, aug_tensor2), axis=1), _torch.sum(_torch.sub(aug_tensor1, aug_tensor2)))
 
-                # Double the batchsize and halve the learning rate if epoch in batchsteps
+                '''Double the batchsize and decrease the learning rate by 0.8 for each batchstep'''
                 if epoch in batchsteps:
                     for param_group in optimizer.param_groups:
-                        param_group['lr'] *= 0.5
+                        param_group['lr'] *= 0.8
+                        #if param_group['eps']==1e-7:
+                        #    param_group['lr'] *=1
+                        #else:
+                        #    param_group['lr'] *=1
                     data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, tnftensor, aug_tensor1, aug_tensor2),
                                         batch_size=dataloader.batch_size if epoch == 0 else data_loader.batch_size * 2,
                                         shuffle=True, drop_last=False, num_workers=dataloader.num_workers, pin_memory=dataloader.pin_memory)
                 else:
                     data_loader = _DataLoader(dataset=_TensorDataset(depthstensor, tnftensor, aug_tensor1, aug_tensor2),
                                         batch_size=dataloader.batch_size if epoch == 0 else data_loader.batch_size,
-                                        drop_last=False, shuffle=True, num_workers=dataloader.num_workers, pin_memory=dataloader.pin_memory)
+                                        shuffle=True, drop_last=False, num_workers=dataloader.num_workers, pin_memory=dataloader.pin_memory)
                 self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, hparams, awl)
 
         # vamb
         else:
-            optimizer = Adam(self.parameters(), lr=lrate)
+            optimizer = _Adam(self.parameters(), lr=lrate)
             data_loader = _DataLoader(dataset=dataloader.dataset,
                                     batch_size=dataloader.batch_size,
                                     shuffle=True,
@@ -655,7 +686,7 @@ class VAE(_nn.Module):
                                         drop_last=False,
                                         num_workers=data_loader.num_workers,
                                         pin_memory=data_loader.pin_memory)
-                self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, Namespace())
+                self.trainepoch(data_loader, epoch, optimizer, batchsteps_set, logfile, _Namespace())
 
         # Save weights - Lord forgive me, for I have sinned when catching all exceptions
         if modelfile is not None:
@@ -666,7 +697,7 @@ class VAE(_nn.Module):
 
         return None
 
-    def nt_xent_loss(self, out_1, out_2, temperature=0.1, eps=1e-6):
+    def nt_xent_loss(self, out_1, out_2, temperature=2, eps=1e-6):
         """
             assume out_1 and out_2 are normalized
             out_1: [batch_size, dim]
@@ -675,8 +706,8 @@ class VAE(_nn.Module):
         # gather representations in case of distributed training
         # out_1_dist: [batch_size * world_size, dim]
         # out_2_dist: [batch_size * world_size, dim]
-        out_1 = F.normalize(out_1, dim=1)
-        out_2 = F.normalize(out_2, dim=1)
+        out_1 = _F.normalize(out_1, dim=1)
+        out_2 = _F.normalize(out_2, dim=1)
 
         out_1_dist = out_1
         out_2_dist = out_2
@@ -699,7 +730,7 @@ class VAE(_nn.Module):
         neg = sim.sum(dim=-1)
 
         # from each row, subtract e^1 to remove similarity measure for x1.x1
-        row_sub = _torch.Tensor(neg.shape).fill_(math.e).to(neg.device)
+        row_sub = _torch.Tensor(neg.shape).fill_(_math.e).to(neg.device)
         neg = _torch.clamp(neg - row_sub, min=eps)  # clamp for numerical stability
 
         # Positive similarity, pos becomes [2 * batch_size]

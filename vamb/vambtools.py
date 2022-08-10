@@ -239,7 +239,7 @@ class FastaEntry:
         _kmercounts(self.sequence, k, counts)
         return counts
 
-def byte_iterfasta(filehandle, comment=b'#'):
+def byte_iterfasta(filehandle, comment=b'#', entry_count=[]):
     """Yields FastaEntries from a binary opened fasta file.
 
     Usage:
@@ -278,12 +278,14 @@ def byte_iterfasta(filehandle, comment=b'#'):
     header = probeline[1:-1].decode()
     buffer = list()
 
+    num_entry = 1
     # Iterate over lines and yield generators one by one
     for line in line_iterator:
         if line.startswith(comment):
             pass
 
         elif line.startswith(b'>'):
+            num_entry += 1
             yield FastaEntry(header, bytearray().join(buffer))
             buffer.clear()
             header = line[1:-1].decode()
@@ -291,6 +293,7 @@ def byte_iterfasta(filehandle, comment=b'#'):
         else:
             buffer.append(line)
 
+    entry_count.append(num_entry)
     yield FastaEntry(header, bytearray().join(buffer))
 
 def write_clusters(filehandle, clusters, max_clusters=None, min_size=1,
