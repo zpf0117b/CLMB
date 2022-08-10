@@ -604,9 +604,10 @@ class VAE(_nn.Module):
             # print('optimizer',optimizer.param_groups)
 
             '''Read augmentation data from indexed files. Note that, CLMB can't guarantee an order training with augmented data if the outdir exists.'''
+            aug_all_method = ['GaussianNoise','Transition','Transversion','Mutation','AllAugmentation']
             augmentation_count_number = [0, 0]
-            augmentation_count_number[0] = len(_glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}*')) if hparams.augmode[0] == -1 else len(_glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}*_.{hparams.augmode[0]}._*'))
-            augmentation_count_number[1] = len(_glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}*')) if hparams.augmode[0] == -1 else len(_glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}*_.{hparams.augmode[1]}._*'))
+            augmentation_count_number[0] = len(_glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}*')) if hparams.augmode[0] == -1 else len(_glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}*_{aug_all_method[hparams.augmode[0]]}_*'))
+            augmentation_count_number[1] = len(_glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}*')) if hparams.augmode[0] == -1 else len(_glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}*_{aug_all_method[hparams.augmode[1]]}_*'))
 
             if augmentation_count_number[0] > _math.ceil(_math.sqrt(nepochs)) or augmentation_count_number[1] > _math.ceil(_math.sqrt(nepochs)):
                 _warnings.warn('Too many augmented data, augmented data might not be trained enough. CLMB do not know how this influence the performance', FutureWarning)
@@ -617,24 +618,32 @@ class VAE(_nn.Module):
             def _aug_file_shuffle(_count, _augmentationpath, _augdatashuffle):
                 _shuffle_file1 = _random.randrange(0, sum(_count) - 1)
                 if _augdatashuffle:
-                    _aug_archive1_file = None if _shuffle_file1 < _count[0] else (_glob(rf'{_augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_*') if hparams.augmode[1] == -1 else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_.{hparams.augmode[1]}._*'))
+                    _aug_archive1_file = None if _shuffle_file1 < _count[0] else (_glob(rf'{_augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_*') if hparams.augmode[0] == -1 \
+                            else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_{aug_all_method[hparams.augmode[0]]}_*'))
                 else:
-                    _aug_archive1_file = _glob(rf'{_augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_*') if hparams.augmode[0] == -1 else _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_.{hparams.augmode[0]}._*')
+                    _aug_archive1_file = _glob(rf'{_augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_*') if hparams.augmode[0] == -1 \
+                            else _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_{aug_all_method[hparams.augmode[0]]}_*')
                 _shuffle_file2 = _random.randrange(0, sum(_count) - 1)
                 if _augdatashuffle:
-                    _aug_archive2_file = None if _shuffle_file2 < _count[1] else (_glob(rf'{_augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_*') if hparams.augmode[1] == -1 else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_.{hparams.augmode[1]}._*'))
+                    _aug_archive2_file = None if _shuffle_file2 < _count[1] else (_glob(rf'{_augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_*') if hparams.augmode[1] == -1 \
+                            else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_{aug_all_method[hparams.augmode[1]]}_*'))
                 else:
-                    _aug_archive2_file = _glob(rf'{_augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_*') if hparams.augmode[1] == -1 else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_.{hparams.augmode[1]}._*')
+                    _aug_archive2_file = _glob(rf'{_augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_*') if hparams.augmode[1] == -1 \
+                            else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{_shuffle_file2 % _count[1]}_{aug_all_method[hparams.augmode[1]]}_*')
                 return _aug_archive1_file, _aug_archive2_file
                 
 
             for epoch in range(nepochs):
-                aug_archive1_file = _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{epoch // augmentation_count_number[0]}_*') if hparams.augmode[0] == -1 else _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{epoch // augmentation_count_number[0]}_.{hparams.augmode[0]}._*')
-                aug_archive2_file = _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{epoch % augmentation_count_number[1]}_*') if hparams.augmode[1] == -1 else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{epoch % augmentation_count_number[1]}_.{hparams.augmode[1]}._*')
+                aug_archive1_file = _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{epoch // augmentation_count_number[0]}_*') if hparams.augmode[0] == -1 \
+                        else _glob(rf'{augmentationpath+_os.sep}pool0*k{self.k}_*index{epoch // augmentation_count_number[0]}_{aug_all_method[hparams.augmode[0]]}_*')
+                aug_archive2_file = _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{epoch % augmentation_count_number[1]}_*') if hparams.augmode[1] == -1 \
+                        else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{epoch % augmentation_count_number[1]}_{aug_all_method[hparams.augmode[1]]}_*')
+
                 '''If augdatashuffle in on, read augmentation data from shuffled-indexed files'''
                 if augdatashuffle:
                     shuffle_file1, shuffle_file2 = _aug_file_shuffle(augmentation_count_number, augmentationpath, augdatashuffle)
                     aug_archive1_file, aug_archive2_file = aug_archive1_file if shuffle_file1 is None else shuffle_file1, aug_archive2_file if shuffle_file2 is None else shuffle_file2
+
                 '''Avoid training 2 same augmentation data'''
                 aug_tensor1, aug_tensor2 = 0, 0
                 while(_torch.sum(_torch.sub(aug_tensor1, aug_tensor2))==0):

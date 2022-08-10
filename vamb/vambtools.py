@@ -239,7 +239,7 @@ class FastaEntry:
         _kmercounts(self.sequence, k, counts)
         return counts
 
-def byte_iterfasta(filehandle, comment=b'#', entry_count=[]):
+def byte_iterfasta(filehandle, comment=b'#'):
     """Yields FastaEntries from a binary opened fasta file.
 
     Usage:
@@ -278,14 +278,12 @@ def byte_iterfasta(filehandle, comment=b'#', entry_count=[]):
     header = probeline[1:-1].decode()
     buffer = list()
 
-    num_entry = 1
     # Iterate over lines and yield generators one by one
     for line in line_iterator:
         if line.startswith(comment):
             pass
 
         elif line.startswith(b'>'):
-            num_entry += 1
             yield FastaEntry(header, bytearray().join(buffer))
             buffer.clear()
             header = line[1:-1].decode()
@@ -293,8 +291,47 @@ def byte_iterfasta(filehandle, comment=b'#', entry_count=[]):
         else:
             buffer.append(line)
 
-    entry_count.append(num_entry)
     yield FastaEntry(header, bytearray().join(buffer))
+
+def count_entry(filehandle, comment=b'#') -> int:
+    """Count the number of entries in a binary opened fasta file.
+
+    Inputs:
+        filehandle: Any iterator of binary lines of a FASTA file
+        comment: Ignore lines beginning with any whitespace + comment
+
+    Output: Number of entries in file
+    """
+
+    # Make it work for persistent iterators, e.g. lists
+    line_iterator = iter(filehandle)
+    # Skip to first header
+    try:
+        for probeline in line_iterator:
+            stripped = probeline.lstrip()
+            if stripped.startswith(comment):
+                pass
+
+            elif probeline[0:1] == b'>':
+                break
+
+            else:
+                raise ValueError('First non-comment line is not a Fasta header')
+
+        else: # no break Caution!! Represent for that for block has no breaks, don't use it causally
+            raise ValueError('Empty or outcommented file')
+
+    except TypeError:
+        errormsg = 'First line does not contain bytes. Are you reading file in binary mode?'
+        raise TypeError(errormsg) from None
+
+    num_entry = 1
+    # Iterate over lines and count entries one by one
+    for line in line_iterator:
+        if line.startswith(b'>'):
+            num_entry += 1
+
+    return num_entry
 
 def write_clusters(filehandle, clusters, max_clusters=None, min_size=1,
                  header=None, rename=True):

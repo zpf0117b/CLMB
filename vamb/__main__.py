@@ -37,7 +37,7 @@ def log(string, logfile, indent=0):
     print(('\t' * indent) + string, file=logfile)
     logfile.flush()
 
-def calc_tnf(outdir, fastapath, k, tnfpath, namespath, lengthspath, mincontiglength, logfile, nepochs, augdatashuffle, augmentation_store_dir, augmode, contrastive=True):
+def calc_tnf(outdir, fastapath, k, tnfpath, namespath, lengthspath, mincontiglength, logfile, nepochs, augmentation_store_dir, augmode, contrastive=True):
     begintime = time.time()
     log('\nLoading TNF', logfile, 0)
     log('Minimum sequence length: {}'.format(mincontiglength), logfile, 1)
@@ -81,7 +81,7 @@ def calc_tnf(outdir, fastapath, k, tnfpath, namespath, lengthspath, mincontiglen
             backup_iteration = math.ceil(math.sqrt(nepochs))
             log('Generating {} augmentation data'.format(backup_iteration), logfile, 1)
             with vamb.vambtools.Reader(fastapath, 'rb') as tnffile:
-                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, k=k, store_dir=augmentation_store_dir, backup_iteration=backup_iteration, augmode=augmode, augdatashuffle=augdatashuffle)
+                tnfs, contignames, contiglengths = vamb.parsecontigs.read_contigs_augmentation(tnffile, minlength=mincontiglength, k=k, store_dir=augmentation_store_dir, backup_iteration=backup_iteration, augmode=augmode)
                 tnffile.close()
 
         # Discard any sequence with a length below mincontiglength
@@ -163,7 +163,8 @@ def trainvae(outdir, rpkms, tnfs, k, contrastive, augmode, augdatashuffle, augme
     nsamples = rpkms.shape[1]
 
     # basic config for contrastive learning
-    aug_all_method = ['AllAugmentation','GaussianNoise','Transition','Transversion','Mutation']
+    aug_all_method = ['GaussianNoise','Transition','Transversion','Mutation','AllAugmentation']
+
     hparams = Namespace(
         batch_size=batchsize,
         validation_size=4096,
@@ -297,7 +298,7 @@ def run(outdir, fastapath, k, tnfpath, namespath, lengthspath,
 
     # Get TNFs, save as npz
     tnfs, contignames, contiglengths = calc_tnf(outdir, fastapath, k, tnfpath, namespath,
-                                            lengthspath, mincontiglength, logfile, nepochs, augdatashuffle, augmentationpath, augmode, contrastive)
+                                            lengthspath, mincontiglength, logfile, nepochs, augmentationpath, augmode, contrastive)
 
     # if not (os.path.exists(augmentationpath) and len(os.listdir(augmentationpath)) >= nepochs * 4):
     #     raise FileNotFoundError('Not an existing directory or not an directory with enough files for training' + augmentationpath)
@@ -484,11 +485,13 @@ def main():
             augmentation_data_dir = args.augmentation
 
         augmentation_number = [0, 0]
+        aug_all_method = ['GaussianNoise','Transition','Transversion','Mutation','AllAugmentation']
+
         for i in range(2):
             if args.augmode[i] == -1:
                 augmentation_number[i] = len(glob.glob(rf'{augmentation_data_dir+os.sep}pool{i}*k{args.k}*'))
             elif 0<= args.augmode[i] <= 3:
-                augmentation_number[i] = len(glob.glob(rf'{augmentation_data_dir+os.sep}pool{i}*k{args.k}*_.{args.augmode[i]}._*'))
+                augmentation_number[i] = len(glob.glob(rf'{augmentation_data_dir+os.sep}pool{i}*k{args.k}*_{aug_all_method[args.augmode[i]]}_*'))
             else:
                 raise argparse.ArgumentTypeError('If contrastive learning is on, augmode must be int >-2 and <4')
 

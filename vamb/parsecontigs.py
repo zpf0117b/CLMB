@@ -87,7 +87,7 @@ def read_contigs(filehandle, minlength=100, k=4):
 
     return tnfs_arr, contignames, lengths_arr
 
-def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", backup_iteration=18, augmode=[-1,-1], augdatashuffle=False):
+def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", backup_iteration=18, augmode=[-1,-1]):
     """Parses a FASTA file open in binary reading mode.
 
     Input:
@@ -122,23 +122,27 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
     # We do not generate the iteration number due to time cost. We just find the minimum augmentation we need for all iteration (backup_iteration)
     # Create backup augmentation pools
     '''
-    pools = 2
+    pool = 2
     gaussian_count, trans_count, traver_count, mutated_count = [0,0], [0,0], [0,0], [0,0]
+    # aug_all_method = ['AllAugmentation','GaussianNoise','Transition','Transversion','Mutation']
 
     # Create projection kernel
     _KERNEL_PROJ = _vambtools.read_npz(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                               f"kernel/kernel{k}.npz"))
+
+    # Count the number of entries
+    filehandle.filehandle.seek(0, 0)
+    entry_count = _vambtools.count_entry(filehandle)
+    print(f'{entry_count} sequences are used for this binning')
+
+    '''If the number of sequences is too large, we might decrease the number of generated augmentation to avoid CLMB being killed.'''
+    if entry_count * backup_iteration > 70000000:
+        backup_iteration_2 = 70000000 // entry_count
+    else:
+        backup_iteration_2 = backup_iteration
+
     # Pool 1
-    for i in range(pools):
-
-        filehandle.filehandle.seek(0, 0)
-        # Count the number of entries
-        entry_count = []
-        entries = _vambtools.byte_iterfasta(filehandle, entry_count=entry_count)
-
-        '''If the number of sequences is too large, we might decrease the number of generated augmentation to avoid CLMB being killed.'''
-        if entry_count[0] * backup_iteration > 70000000:
-            backup_iteration_2 = 70000000 // entry_count[0]
+    for i in range(pool):
         
         if augmode[i] == -1:
             # Constraits: transition frequency = 2 * transversion frequency = 4 * gaussian noise frequency
@@ -162,6 +166,7 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
         for i2 in range(pool2):
             backup_iteration_3 = backup_iteration % backup_iteration_2
             if i2 == pool2 - 1 and backup_iteration_3 != 0:
+                # Last batch for generating remaining augmented data
                 if augmode[i] == -1:
                     gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = backup_iteration_3 - backup_iteration_3*4//14 - backup_iteration_3*2//14 - backup_iteration_3//2, backup_iteration_3*4//14, backup_iteration_3*2//14, backup_iteration_3//2
                 elif augmode[i] == 0:
@@ -172,6 +177,10 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
                     gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = 0, 0, backup_iteration_3, 0
                 elif augmode[i] == 3:
                     gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = 0, 0, 0, backup_iteration_3
+
+            '''Reset the file and generator for next reading'''
+            filehandle.filehandle.seek(0, 0)
+            entries = _vambtools.byte_iterfasta(filehandle)
 
             for entry in entries:
                 if len(entry) < minlength:
@@ -246,29 +255,29 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
             mutated_arr = mutated.take()
             if mutated_count[i] != 0:
                 mutated_arr.shape = (-1, mutated_count[i], 4**k)
-
+        # AllAugmentation','GaussianNoise','Transition','Transversion','Mutation'
             for j2 in range(gaussian_count[i]):
                 gaussian_save = gaussian_arr[:,j2,:]
                 gaussian_save.shape = (-1, 4**k)
-                _np.savez(f"{store_dir+_os.sep}pool{i}_k{k}_index{index_list[index]}_.0._{j2}.npz", _convert_and_project_mat(gaussian_save, _KERNEL_PROJ, k))
+                _np.savez(f"{store_dir+_os.sep}pool{i}_k{k}_index{index_list[index]}_GaussianNoise_{j2}.npz", _convert_and_project_mat(gaussian_save, _KERNEL_PROJ, k))
                 index += 1
 
             for j2 in range(trans_count[i]):
                 trans_save = trans_arr[:,j2,:]
                 trans_save.shape = (-1, 4**k)
-                _np.savez(f"{store_dir+_os.sep}pool{i}_k{k}_index{index_list[index]}_.1._{j2}.npz", _convert_and_project_mat(trans_save, _KERNEL_PROJ, k))
+                _np.savez(f"{store_dir+_os.sep}pool{i}_k{k}_index{index_list[index]}_Transition_{j2}.npz", _convert_and_project_mat(trans_save, _KERNEL_PROJ, k))
                 index += 1
 
             for j2 in range(traver_count[i]):
                 traver_save = traver_arr[:,j2,:]
                 traver_save.shape = (-1, 4**k)
-                _np.savez(f"{store_dir+_os.sep}pool{i}_k{k}_index{index_list[index]}_.2._{j2}.npz", _convert_and_project_mat(traver_save, _KERNEL_PROJ, k))
+                _np.savez(f"{store_dir+_os.sep}pool{i}_k{k}_index{index_list[index]}_Transversion_{j2}.npz", _convert_and_project_mat(traver_save, _KERNEL_PROJ, k))
                 index += 1
 
             for j2 in range(mutated_count[i]):
                 mutated_save = mutated_arr[:,j2,:]
                 mutated_save.shape = (-1, 4**k)
-                _np.savez(f"{store_dir+_os.sep}pool{i}_k{k}_index{index_list[index]}_.3._{j2}.npz", _convert_and_project_mat(mutated_save, _KERNEL_PROJ, k))
+                _np.savez(f"{store_dir+_os.sep}pool{i}_k{k}_index{index_list[index]}_Mutation_{j2}.npz", _convert_and_project_mat(mutated_save, _KERNEL_PROJ, k))
                 index += 1
 
             gaussian.clear()
@@ -276,9 +285,6 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
             traver.clear()
             mutated.clear()
 
-            '''Reset the file and generator for next reading'''
-            filehandle.filehandle.seek(0, 0)
-            entries = _vambtools.byte_iterfasta(filehandle, entry_count=entry_count)
             print(time(), backup_iteration, backup_iteration_2, backup_iteration_3)
 
     lengths_arr = lengths.take()
