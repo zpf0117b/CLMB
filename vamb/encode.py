@@ -408,9 +408,8 @@ class VAE(_nn.Module):
                 # loss3, ce3, sse3, kld3 = self.calc_loss(depths, depths_out, tnf_in, tnf_out, mu, logsigma)
 
                 # NOTE: Add weight to avoid gradient disappearance
-                sigma = 4000
                 # loss = awl(800*loss_contrast1, 800*loss_contrast2, 800*loss_contrast3) + 10000*loss1 + 2000*loss2 + 2000*loss3
-                loss = awl(sigma*loss_contrast1, sigma*loss_contrast2, sigma*loss_contrast3) + 10000*loss1
+                loss = awl(hparams.sigma*loss_contrast1, hparams.sigma*loss_contrast2, hparams.sigma*loss_contrast3) + 10000*loss1
                 # loss = awl(awl_c(800*loss_contrast1, 800*loss_contrast2, 800*loss_contrast3), 10000*loss1, 2000*loss2, 2000*loss3)
                 loss.backward()
 
@@ -533,7 +532,7 @@ class VAE(_nn.Module):
         return vae
 
     def trainmodel(self, dataloader, nepochs=320, lrate=1e-3,
-                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams=None, augmentationpath=None, augdatashuffle=False, mask=None):
+                   batchsteps=[25, 75, 150, 300], logfile=None, modelfile=None, hparams=None, augmentationpath=None, mask=None):
         """Train the autoencoder from depths array and tnf array.
         Inputs:
             dataloader: DataLoader made by make_dataloader
@@ -542,9 +541,8 @@ class VAE(_nn.Module):
             batchsteps: None or double batchsize at these epochs [25, 75, 150, 300]
             logfile: Print status updates to this file if not None [None]
             modelfile: Save models to this file if not None [None]
-            hparams: CLMB only. Set the batchsize, augmode, temperature for contrastive learning. [None] 
+            hparams: CLMB only. Set the batchsize, augmode, temperature for contrastive learning. See the function (trainvae) in (__main.py__) for value setting. [None] 
             augmentationpath: CLMB only. Path to find the augmented data [None]
-            augdatashuffle: CLMB only. Shuffle the augmented data for training to introduce more noise. Setting True is not recommended. [False]
             mask: CLMB only. Mask the augmented data to keep nonzero tnfs and rpkm [None]
         Output: None
         """
@@ -615,7 +613,7 @@ class VAE(_nn.Module):
                 raise RuntimeError('Shortage of augmented data. Please regenerate enough augmented data using fasta files, or do not specify the --contrastive option to run VAMB')
 
             '''Function for shuffling the augmented data (if needed)'''
-            def _aug_file_shuffle(_count, _augmentationpath, _augdatashuffle):
+            def _aug_file_shuffle(_count, _augmentationpath, _augdatashuffle=False):
                 _shuffle_file1 = _random.randrange(0, sum(_count) - 1)
                 if _augdatashuffle:
                     _aug_archive1_file = None if _shuffle_file1 < _count[0] else (_glob(rf'{_augmentationpath+_os.sep}pool0*k{self.k}_*index{_shuffle_file1 % _count[0]}_*') if hparams.augmode[0] == -1 \
@@ -640,8 +638,8 @@ class VAE(_nn.Module):
                         else _glob(rf'{augmentationpath+_os.sep}pool1*k{self.k}_*index{epoch % augmentation_count_number[1]}_{aug_all_method[hparams.augmode[1]]}_*')
 
                 '''If augdatashuffle in on, read augmentation data from shuffled-indexed files'''
-                if augdatashuffle:
-                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(augmentation_count_number, augmentationpath, augdatashuffle)
+                if hparams.augdatashuffle:
+                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(augmentation_count_number, augmentationpath, hparams.augdatashuffle)
                     aug_archive1_file, aug_archive2_file = aug_archive1_file if shuffle_file1 is None else shuffle_file1, aug_archive2_file if shuffle_file2 is None else shuffle_file2
 
                 '''Avoid training 2 same augmentation data'''
@@ -657,14 +655,14 @@ class VAE(_nn.Module):
                     aug_tensor1, aug_tensor2 = _torch.from_numpy(aug_arr1), _torch.from_numpy(aug_arr2)
                     # print('augtensor', _torch.sum(aug_tensor1 ** 2), _torch.sum(aug_tensor2 ** 2), aug_archive1_file, aug_archive2_file, _np.sum(aug_arr1 ** 2), _np.sum(aug_arr2 ** 2))
                     # if aug_tensor1 == aug_tensor2, reloop
-                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(augmentation_count_number, augmentationpath, augdatashuffle)
+                    shuffle_file1, shuffle_file2 = _aug_file_shuffle(augmentation_count_number, augmentationpath)
                     aug_archive1_file, aug_archive2_file = aug_archive1_file if shuffle_file1 is None else shuffle_file1, aug_archive2_file if shuffle_file2 is None else shuffle_file2
                 # print('difference',_torch.sum(_torch.sub(aug_tensor1, aug_tensor2), axis=1), _torch.sum(_torch.sub(aug_tensor1, aug_tensor2)))
 
                 '''Double the batchsize and decrease the learning rate by 0.8 for each batchstep'''
                 if epoch in batchsteps:
                     for param_group in optimizer.param_groups:
-                        param_group['lr'] *= 0.8
+                        param_group['lr'] *= hparams.lrate_decent
                         #if param_group['eps']==1e-7:
                         #    param_group['lr'] *=1
                         #else:

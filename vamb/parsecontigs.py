@@ -157,7 +157,7 @@ def read_contigs_augmentation(filehandle, minlength=100, k=4, store_dir="./", ba
             gaussian_count[i], trans_count[i], traver_count[i], mutated_count[i] = 0, 0, 0, backup_iteration_2
 
         '''Generate augmented data for several batches'''
-        pool2 = _math.ceil(backup_iteration // backup_iteration_2)
+        pool2 = _math.ceil(backup_iteration / backup_iteration_2)
         # Put index for each augmented data
         index = 0
         index_list = list(range(backup_iteration))

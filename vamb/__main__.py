@@ -164,14 +164,16 @@ def trainvae(outdir, rpkms, tnfs, k, contrastive, augmode, augdatashuffle, augme
 
     # basic config for contrastive learning
     aug_all_method = ['GaussianNoise','Transition','Transversion','Mutation','AllAugmentation']
-
     hparams = Namespace(
-        batch_size=batchsize,
-        validation_size=4096,
-        visualize_size=25600,
-        temperature=temperature,
-        aug_mode=augmode
+        validation_size=4096,   # Debug only. Validation size for training.
+        visualize_size=25600,   # Debug only. Visualization (pca) size for training.
+        temperature=temperature,        # The parameter for contrastive loss
+        augmode=augmode,        # Augmentation method choices (in aug_all_method)
+        sigma = 4000,           # Add weight on the contrastive loss to avoid gradient disappearance
+        lrate_decent = 0.8,     # Decrease the learning rate by lrate_decent for each batchstep
+        augdatashuffle = augdatashuffle     # Shuffle the augmented data for training to introduce more noise. Setting True is not recommended. [False]
     )
+
     dataloader, mask = vamb.encode.make_dataloader(rpkms, tnfs, batchsize,
                                                    destroy=True, cuda=cuda)
 
@@ -186,10 +188,10 @@ def trainvae(outdir, rpkms, tnfs, k, contrastive, augmode, augdatashuffle, augme
     if contrastive:
         if True:
             vae = vamb.encode.VAE(ntnf=int(tnfs.shape[1]), nsamples=nsamples, k=k, nhiddens=nhiddens, nlatent=nlatent,alpha=alpha, beta=beta, dropout=dropout, cuda=cuda, c=True)
-            modelpath = os.path.join(outdir, f"{aug_all_method[hparams.aug_mode[0]]+'_'+aug_all_method[hparams.aug_mode[1]]}.pt")
-            vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams, augmentationpath=augmentationpath, augdatashuffle=augdatashuffle, mask=mask)
+            modelpath = os.path.join(outdir, f"{aug_all_method[hparams.augmode[0]]+'_'+aug_all_method[hparams.augmode[1]]}.pt")
+            vae.trainmodel(dataloader, nepochs=nepochs, lrate=lrate, batchsteps=batchsteps,logfile=logfile, modelfile=modelpath, hparams=hparams, augmentationpath=augmentationpath, mask=mask)
         else:
-            modelpath = os.path.join(outdir, f"final-dim/{aug_all_method[hparams.aug_mode[0]]+' '+aug_all_method[hparams.aug_mode[1]]+' '+str(hparams.hidden_mlp)}.pt")
+            modelpath = os.path.join(outdir, f"final-dim/{aug_all_method[hparams.augmode[0]]+' '+aug_all_method[hparams.augmode[1]]+' '+str(hparams.hidden_mlp)}.pt")
             vae = vamb.encode.VAE.load(modelpath,cuda=cuda,c=True)
             vae.to(('cuda' if cuda else 'cpu'))
     else:
